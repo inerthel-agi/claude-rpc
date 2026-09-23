@@ -2,7 +2,7 @@
 name = "claude_rpc_tray"
 version = "3.6.0"
 description = "Claude RPC"
-authors = ["StealthyLabs"]
+authors = ["Inerthel"]
 license = "ISC"
 edition = "2021"
 

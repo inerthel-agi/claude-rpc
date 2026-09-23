@@ -19,7 +19,7 @@
     "claude",
     "anthropic"
   ],
-  "author": "StealthyLabs",
+  "author": "Inerthel",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {

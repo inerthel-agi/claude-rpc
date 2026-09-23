@@ -587,7 +587,7 @@ fn small_image_text(result: &DetectionResult) -> String {
 }
 
 fn logo_image() -> String {
-    "https://raw.githubusercontent.com/stealthsrc/claude-rpc/main/logo/clawd.png".into()
+    "https://raw.githubusercontent.com/inerthel-agi/claude-rpc/main/logo/clawd.png".into()
 }
 
 fn activity_verb(mode: &str) -> &'static str {
