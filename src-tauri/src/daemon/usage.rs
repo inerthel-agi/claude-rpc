@@ -1,14 +1,11 @@
-// Usage & cost tracking: per-model cost rollups (live session + ~/.claude.json),
-// usage-limit buckets (Desktop UI scrape + OAuth usage API), their caches, and
-// the Discord/status lines built from them.
+// Usage-limit buckets from Desktop and the OAuth API, plus their cache.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, path::Path};
+use std::fs;
 
 use super::{
-    app_dir, claude_dir, home_dir, modified_ms, normalize_ui_label, now_ms, truncate, write_status,
-    StateMachine,
+    app_dir, claude_dir, normalize_ui_label, now_ms, truncate, write_status, StateMachine,
 };
 use crate::config::ClaudeConfig;
 
@@ -40,444 +37,16 @@ pub(crate) struct LimitVisibility {
     pub(crate) enabled: bool,
     pub(crate) show_5h: bool,
     pub(crate) show_all: bool,
-    pub(crate) show_sonnet: bool,
 }
 
-// Per-model usage rolled up by model family (Opus/Sonnet/Haiku/Fable). `cost_usd`
-// is Claude Code's own figure (cache-aware) summed across the family's snapshots;
-// `input_cost`/`output_cost` are the table-rate breakdown of the input/output
-// tokens (no cache), so the UI can show both the real spend and the in/out split.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ModelCost {
-    pub(crate) label: String,
-    pub(crate) input_tokens: u64,
-    pub(crate) output_tokens: u64,
-    pub(crate) cache_read_tokens: u64,
-    pub(crate) cache_creation_tokens: u64,
-    pub(crate) input_cost: f64,
-    pub(crate) output_cost: f64,
-    pub(crate) cost_usd: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ProjectUsage {
-    path_norm: String,
-    models: Vec<ModelCost>,
-}
 pub(crate) fn limit_visibility(config: &ClaudeConfig) -> LimitVisibility {
     LimitVisibility {
         enabled: config.show_limits,
         show_5h: config.show_limit_5h,
         show_all: config.show_limit_all,
-        show_sonnet: config.show_limit_sonnet,
     }
 }
 
-// Cost/token data must be gathered whenever any cost- or token-related Discord
-// label (or the Settings panel) is on.
-pub(crate) fn cost_enabled(config: &ClaudeConfig) -> bool {
-    config.show_cost
-        || config.show_cost_total
-        || config.show_project_tokens
-        || config.show_all_tokens
-}
-
-// Per-million input/output rates from the published model pricing
-// (platform.claude.com/docs/.../models/overview). Returns the family label used
-// to roll up snapshots and to match the active model for the Discord summary.
-pub(crate) fn model_pricing(model_id: &str) -> Option<(&'static str, f64, f64)> {
-    let id = model_id.to_ascii_lowercase();
-    // Snapshot ids carry suffixes like "[1m]"; classify on the bare id.
-    let base = id.split('[').next().unwrap_or(id.as_str());
-    if base.contains("fable") || base.contains("mythos") {
-        Some(("Fable", 10.0, 50.0))
-    } else if base.contains("haiku") {
-        Some(("Haiku", 1.0, 5.0))
-    } else if base.contains("sonnet") {
-        Some(("Sonnet", 3.0, 15.0))
-    } else if base.contains("opus") {
-        // Opus 4.1 is the lone $15/$75 tier; 4.5/4.6/4.7/4.8 are all $5/$25.
-        if base.contains("opus-4-1-") || base.ends_with("opus-4-1") {
-            Some(("Opus", 15.0, 75.0))
-        } else {
-            Some(("Opus", 5.0, 25.0))
-        }
-    } else {
-        None
-    }
-}
-
-pub(crate) fn normalize_project_path(path: &str) -> String {
-    path.replace('\\', "/").to_ascii_lowercase()
-}
-
-pub(crate) fn format_cost(value: f64) -> String {
-    format!("${value:.2}")
-}
-
-pub(crate) fn format_tokens(count: u64) -> String {
-    if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
-    } else if count >= 1_000 {
-        format!("{:.0}K", count as f64 / 1_000.0)
-    } else {
-        count.to_string()
-    }
-}
-
-pub(crate) fn sort_costs(models: &mut [ModelCost]) {
-    models.sort_by(|a, b| {
-        b.cost_usd
-            .partial_cmp(&a.cost_usd)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-}
-
-pub(crate) fn add_cost(bucket: &mut ModelCost, model: &ModelCost) {
-    bucket.input_tokens += model.input_tokens;
-    bucket.output_tokens += model.output_tokens;
-    bucket.cache_read_tokens += model.cache_read_tokens;
-    bucket.cache_creation_tokens += model.cache_creation_tokens;
-    bucket.input_cost += model.input_cost;
-    bucket.output_cost += model.output_cost;
-    bucket.cost_usd += model.cost_usd;
-}
-
-// Inverse of add_cost: remove a snapshot already folded into the bucket. Tokens
-// use saturating_sub and costs are floored at 0 since the subtrahend is always a
-// subset of the bucket, so the result can't legitimately go negative.
-pub(crate) fn sub_cost(bucket: &mut ModelCost, model: &ModelCost) {
-    bucket.input_tokens = bucket.input_tokens.saturating_sub(model.input_tokens);
-    bucket.output_tokens = bucket.output_tokens.saturating_sub(model.output_tokens);
-    bucket.cache_read_tokens = bucket
-        .cache_read_tokens
-        .saturating_sub(model.cache_read_tokens);
-    bucket.cache_creation_tokens = bucket
-        .cache_creation_tokens
-        .saturating_sub(model.cache_creation_tokens);
-    bucket.input_cost = (bucket.input_cost - model.input_cost).max(0.0);
-    bucket.output_cost = (bucket.output_cost - model.output_cost).max(0.0);
-    bucket.cost_usd = (bucket.cost_usd - model.cost_usd).max(0.0);
-}
-
-// Merge the live in-progress session into the all-projects rollup. The active
-// project's stored lastModelUsage (`current_stored`, already inside `all`) is
-// subtracted before the live session is added, so a running project that also
-// had a prior completed session isn't counted twice (prior + live). With no live
-// session the rollup is returned unchanged, so a just-opened session keeps
-// showing its prior spend until the first turn lands.
-pub(crate) fn fold_live_session(
-    all: Vec<ModelCost>,
-    current_stored: &[ModelCost],
-    current: &[ModelCost],
-) -> Vec<ModelCost> {
-    if current.is_empty() {
-        return all;
-    }
-    let mut merged: HashMap<String, ModelCost> = HashMap::new();
-    for model in &all {
-        let bucket = merged
-            .entry(model.label.clone())
-            .or_insert_with(|| ModelCost {
-                label: model.label.clone(),
-                ..ModelCost::default()
-            });
-        add_cost(bucket, model);
-    }
-    for model in current_stored {
-        if let Some(bucket) = merged.get_mut(&model.label) {
-            sub_cost(bucket, model);
-        }
-    }
-    for model in current {
-        let bucket = merged
-            .entry(model.label.clone())
-            .or_insert_with(|| ModelCost {
-                label: model.label.clone(),
-                ..ModelCost::default()
-            });
-        add_cost(bucket, model);
-    }
-    // Drop families that netted to exactly zero: a prior-session family of the
-    // current project that the live session no longer uses.
-    let mut all: Vec<ModelCost> = merged
-        .into_values()
-        .filter(|model| {
-            model.input_tokens > 0
-                || model.output_tokens > 0
-                || model.cache_read_tokens > 0
-                || model.cache_creation_tokens > 0
-        })
-        .collect();
-    sort_costs(&mut all);
-    all
-}
-
-// Parse ~/.claude.json once into per-project, per-family rollups. Cheap to
-// aggregate afterwards; the parse itself is gated behind an mtime cache.
-pub(crate) fn read_project_usages() -> Vec<ProjectUsage> {
-    let raw = match fs::read_to_string(home_dir().join(".claude.json")) {
-        Ok(raw) => raw,
-        Err(_) => return Vec::new(),
-    };
-    let value: Value = match serde_json::from_str(raw.trim_start_matches('\u{feff}')) {
-        Ok(value) => value,
-        Err(_) => return Vec::new(),
-    };
-    let Some(projects) = value.get("projects").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for (path, project) in projects {
-        let Some(usage) = project.get("lastModelUsage").and_then(Value::as_object) else {
-            continue;
-        };
-        let mut by_family: HashMap<&'static str, ModelCost> = HashMap::new();
-        for (model_id, entry) in usage {
-            let Some((label, input_rate, output_rate)) = model_pricing(model_id) else {
-                continue;
-            };
-            let input = entry
-                .get("inputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let output = entry
-                .get("outputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let cache_read = entry
-                .get("cacheReadInputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let cache_creation = entry
-                .get("cacheCreationInputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let cost = entry.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0);
-            let bucket = by_family.entry(label).or_insert_with(|| ModelCost {
-                label: label.to_string(),
-                ..ModelCost::default()
-            });
-            bucket.input_tokens += input;
-            bucket.output_tokens += output;
-            bucket.cache_read_tokens += cache_read;
-            bucket.cache_creation_tokens += cache_creation;
-            bucket.input_cost += input as f64 / 1_000_000.0 * input_rate;
-            bucket.output_cost += output as f64 / 1_000_000.0 * output_rate;
-            bucket.cost_usd += cost;
-        }
-        if by_family.is_empty() {
-            continue;
-        }
-        let mut models: Vec<ModelCost> = by_family.into_values().collect();
-        sort_costs(&mut models);
-        out.push(ProjectUsage {
-            path_norm: normalize_project_path(path),
-            models,
-        });
-    }
-    out
-}
-
-pub(crate) fn project_usages(machine: &mut StateMachine) -> &[ProjectUsage] {
-    let path = home_dir().join(".claude.json");
-    let mtime = modified_ms(&path).unwrap_or(0);
-    if machine.cached_project_usages.is_none() || machine.cached_project_usages_mtime != mtime {
-        machine.cached_project_usages = Some(read_project_usages());
-        machine.cached_project_usages_mtime = mtime;
-    }
-    machine.cached_project_usages.as_deref().unwrap_or(&[])
-}
-
-// Returns (all projects combined, current project) rolled up per model family.
-pub(crate) fn aggregate_costs(
-    usages: &[ProjectUsage],
-    cwd: Option<&str>,
-) -> (Vec<ModelCost>, Vec<ModelCost>) {
-    let mut all: HashMap<String, ModelCost> = HashMap::new();
-    for usage in usages {
-        for model in &usage.models {
-            let bucket = all.entry(model.label.clone()).or_insert_with(|| ModelCost {
-                label: model.label.clone(),
-                ..ModelCost::default()
-            });
-            add_cost(bucket, model);
-        }
-    }
-    let mut all: Vec<ModelCost> = all.into_values().collect();
-    sort_costs(&mut all);
-
-    let current = cwd
-        .map(normalize_project_path)
-        .and_then(|target| usages.iter().find(|usage| usage.path_norm == target))
-        .map(|usage| usage.models.clone())
-        .unwrap_or_default();
-
-    (all, current)
-}
-
-// Standard prompt-caching multipliers over the model's base input rate:
-// reads are 0.1x, 5-minute cache writes 1.25x, 1-hour cache writes 2x.
-const CACHE_READ_MULT: f64 = 0.1;
-const CACHE_WRITE_5M_MULT: f64 = 1.25;
-const CACHE_WRITE_1H_MULT: f64 = 2.0;
-
-// Live per-model cost for the in-progress session, summed straight from the
-// session .jsonl. Needed because ~/.claude.json only records per-project usage
-// (lastModelUsage / lastCost) at session end, so a running session shows nothing
-// there. Each assistant turn carries message.usage; cost_usd is computed locally
-// (input/output at table rate plus cache reads/writes at the standard multipliers)
-// since Claude's own costUSD isn't written until the session closes.
-pub(crate) fn session_model_costs(path: &Path) -> Vec<ModelCost> {
-    match fs::read_to_string(path) {
-        Ok(raw) => session_model_costs_from_str(&raw),
-        Err(_) => Vec::new(),
-    }
-}
-
-pub(crate) fn session_model_costs_from_str(raw: &str) -> Vec<ModelCost> {
-    let mut by_family: HashMap<&'static str, ModelCost> = HashMap::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let entry: Value = match serde_json::from_str(line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if entry.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(message) = entry.get("message") else {
-            continue;
-        };
-        let Some(usage) = message.get("usage") else {
-            continue;
-        };
-        let model_id = message.get("model").and_then(Value::as_str).unwrap_or("");
-        let Some((label, input_rate, output_rate)) = model_pricing(model_id) else {
-            continue;
-        };
-        let tok = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
-        let input = tok("input_tokens");
-        let output = tok("output_tokens");
-        let cache_read = tok("cache_read_input_tokens");
-        let cache_creation = tok("cache_creation_input_tokens");
-        // Split cache writes into 5m vs 1h when the breakdown is present; otherwise
-        // treat the whole creation bucket as 5m.
-        let (write_5m, write_1h) = match usage.get("cache_creation") {
-            Some(detail) => {
-                let f = |key: &str| detail.get(key).and_then(Value::as_u64).unwrap_or(0);
-                let (w5, w1) = (
-                    f("ephemeral_5m_input_tokens"),
-                    f("ephemeral_1h_input_tokens"),
-                );
-                if w5 + w1 == 0 {
-                    (cache_creation, 0)
-                } else {
-                    (w5, w1)
-                }
-            }
-            None => (cache_creation, 0),
-        };
-
-        let input_cost = input as f64 / 1_000_000.0 * input_rate;
-        let output_cost = output as f64 / 1_000_000.0 * output_rate;
-        let cache_cost = (cache_read as f64 * CACHE_READ_MULT
-            + write_5m as f64 * CACHE_WRITE_5M_MULT
-            + write_1h as f64 * CACHE_WRITE_1H_MULT)
-            / 1_000_000.0
-            * input_rate;
-
-        let bucket = by_family.entry(label).or_insert_with(|| ModelCost {
-            label: label.to_string(),
-            ..ModelCost::default()
-        });
-        bucket.input_tokens += input;
-        bucket.output_tokens += output;
-        bucket.cache_read_tokens += cache_read;
-        bucket.cache_creation_tokens += cache_creation;
-        bucket.input_cost += input_cost;
-        bucket.output_cost += output_cost;
-        bucket.cost_usd += input_cost + output_cost + cache_cost;
-    }
-    let mut models: Vec<ModelCost> = by_family.into_values().collect();
-    sort_costs(&mut models);
-    models
-}
-
-pub(crate) fn session_costs(machine: &mut StateMachine, path: &Path) -> Vec<ModelCost> {
-    let mtime = modified_ms(path).unwrap_or(0);
-    if machine.cached_session_costs.is_none()
-        || machine.cached_session_costs_file.as_deref() != Some(path)
-        || machine.cached_session_costs_mtime != mtime
-    {
-        machine.cached_session_costs = Some(session_model_costs(path));
-        machine.cached_session_costs_file = Some(path.to_path_buf());
-        machine.cached_session_costs_mtime = mtime;
-    }
-    machine.cached_session_costs.clone().unwrap_or_default()
-}
-
-// Compact per-model price summary for the current project/session only, e.g.
-// "Opus $81.57 · Sonnet $0.55 · +1". Price only — token counts come from the
-// separate Proj/All tokens toggles, so Cost never duplicates the token labels.
-pub(crate) fn build_cost_line(current: &[ModelCost]) -> Option<String> {
-    let positives: Vec<&ModelCost> = current
-        .iter()
-        .filter(|model| model.cost_usd > 0.0)
-        .collect();
-    if positives.is_empty() {
-        return None;
-    }
-    const TOP: usize = 3;
-    let mut parts: Vec<String> = positives
-        .iter()
-        .take(TOP)
-        .map(|model| format!("{} {}", model.label, format_cost(model.cost_usd)))
-        .collect();
-    if positives.len() > TOP {
-        parts.push(format!("+{}", positives.len() - TOP));
-    }
-    Some(parts.join(" · "))
-}
-
-// All-projects grand total in parentheses for the Discord line, e.g. "($321.99)".
-// Gated by its own toggle so it can be shown independently of the per-model line.
-pub(crate) fn build_total_line(all: &[ModelCost]) -> Option<String> {
-    let total: f64 = all.iter().map(|model| model.cost_usd).sum();
-    (total > 0.0).then(|| format!("({})", format_cost(total)))
-}
-
-pub(crate) fn sum_tokens(models: &[ModelCost]) -> (u64, u64) {
-    models.iter().fold((0, 0), |(input, output), model| {
-        (input + model.input_tokens, output + model.output_tokens)
-    })
-}
-
-// Current project's total input/output token counts (across models), e.g.
-// "84K/451K tok". Token-only view, independent of the cost labels.
-pub(crate) fn build_project_tokens_line(current: &[ModelCost]) -> Option<String> {
-    let (input, output) = sum_tokens(current);
-    (input > 0 || output > 0)
-        .then(|| format!("{}/{} tok", format_tokens(input), format_tokens(output)))
-}
-
-// All-projects total input/output token counts, e.g. "Σ 6.5M/13.2M tok". Summed
-// over every project found in ~/.claude.json (plus the live session), so it
-// adapts to whatever projects each user actually has.
-pub(crate) fn build_all_tokens_line(all: &[ModelCost]) -> Option<String> {
-    let (input, output) = sum_tokens(all);
-    (input > 0 || output > 0).then(|| {
-        format!(
-            "\u{03a3} {}/{} tok",
-            format_tokens(input),
-            format_tokens(output)
-        )
-    })
-}
 #[cfg(any(windows, test))]
 pub(crate) fn parse_usage_limits(names: &[String]) -> Vec<UsageLimitEntry> {
     let mut entries = Vec::new();
@@ -536,7 +105,6 @@ pub(crate) fn find_limit_label(names: &[String], usage_index: usize) -> Option<(
         let label = match normalize_ui_label(&names[index]).as_str() {
             "current session" => "5h",
             "all models" => "All",
-            "sonnet only" => "Sonnet only",
             _ => continue,
         };
         return Some((label.into(), index));
@@ -596,16 +164,12 @@ pub(crate) fn visible_limit_labels(visibility: LimitVisibility) -> Vec<&'static 
     if visibility.show_all {
         labels.push("All");
     }
-    if visibility.show_sonnet {
-        labels.push("Sonnet only");
-    }
     labels
 }
 
 pub(crate) fn current_limits(
     machine: &mut StateMachine,
     detected_limits: &[UsageLimitEntry],
-    verbose: bool,
 ) -> Vec<UsageLimitEntry> {
     let now = now_ms();
     if machine.cached_limits.is_empty() {
@@ -620,7 +184,7 @@ pub(crate) fn current_limits(
         return fresh_limit_entries(&machine.cached_limits, now);
     }
 
-    if let Some(oauth_limits) = maybe_fetch_oauth_limits(machine, now, verbose) {
+    if let Some(oauth_limits) = maybe_fetch_oauth_limits(machine, now) {
         if !oauth_limits.is_empty() {
             machine.cached_limits = merge_limit_entries(&machine.cached_limits, &oauth_limits, now);
             write_limits_cache(now, &machine.cached_limits);
@@ -651,7 +215,6 @@ const OAUTH_USAGE_BACKOFF_MS: u64 = 5 * 60 * 1000;
 pub(crate) fn maybe_fetch_oauth_limits(
     machine: &mut StateMachine,
     now: u64,
-    verbose: bool,
 ) -> Option<Vec<UsageLimitEntry>> {
     if now < machine.oauth_backoff_until_ms {
         machine.pending_activity_refresh = false;
@@ -669,7 +232,7 @@ pub(crate) fn maybe_fetch_oauth_limits(
     }
     machine.oauth_last_attempt_ms = now;
     machine.pending_activity_refresh = false;
-    match fetch_oauth_usage(verbose) {
+    match fetch_oauth_usage() {
         Ok(entries) => Some(entries),
         Err(OAuthFetchError::RateLimited) => {
             machine.oauth_backoff_until_ms = now + OAUTH_USAGE_BACKOFF_MS;
@@ -686,7 +249,7 @@ pub(crate) enum OAuthFetchError {
     Parse,
 }
 
-pub(crate) fn fetch_oauth_usage(verbose: bool) -> Result<Vec<UsageLimitEntry>, OAuthFetchError> {
+pub(crate) fn fetch_oauth_usage() -> Result<Vec<UsageLimitEntry>, OAuthFetchError> {
     let token = read_oauth_access_token().ok_or(OAuthFetchError::NoToken)?;
     let response = ureq::get(OAUTH_USAGE_URL)
         .timeout(std::time::Duration::from_secs(8))
@@ -700,21 +263,7 @@ pub(crate) fn fetch_oauth_usage(verbose: bool) -> Result<Vec<UsageLimitEntry>, O
         Err(_) => return Err(OAuthFetchError::Network),
     };
     let value: Value = serde_json::from_str(&body).map_err(|_| OAuthFetchError::Parse)?;
-    if verbose {
-        write_oauth_debug(&value);
-    }
     Ok(parse_oauth_usage_response(&value))
-}
-
-pub(crate) fn write_oauth_debug(body: &Value) {
-    let path = app_dir().join("oauth-usage-debug.json");
-    write_status(
-        &path,
-        &json!({
-            "fetchedAt": now_ms(),
-            "body": body,
-        }),
-    );
 }
 
 pub(crate) fn read_oauth_access_token() -> Option<String> {
@@ -733,11 +282,7 @@ pub(crate) fn read_oauth_access_token() -> Option<String> {
 
 pub(crate) fn parse_oauth_usage_response(body: &Value) -> Vec<UsageLimitEntry> {
     let mut entries = Vec::new();
-    let buckets = [
-        ("five_hour", "5h"),
-        ("seven_day", "All"),
-        ("seven_day_sonnet", "Sonnet only"),
-    ];
+    let buckets = [("five_hour", "5h"), ("seven_day", "All")];
     for (key, label) in buckets {
         let Some(bucket) = body.get(key) else {
             continue;
@@ -848,7 +393,6 @@ pub(crate) fn normalize_limit_label(label: &str) -> Option<&'static str> {
     match normalize_ui_label(label).as_str() {
         "5h" | "session" | "current session" => Some("5h"),
         "all" | "all models" => Some("All"),
-        "sonnet" | "sonnet only" | "max only" => Some("Sonnet only"),
         _ => None,
     }
 }
@@ -857,7 +401,112 @@ pub(crate) fn sort_limit_entries(entries: &mut [UsageLimitEntry]) {
     entries.sort_by_key(|entry| match entry.label.as_str() {
         "5h" => 0,
         "All" => 1,
-        "Sonnet only" => 2,
         _ => 9,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_usage_limits() {
+        let names = vec![
+            "Plan usage limits".to_string(),
+            "Current session".to_string(),
+            "Resets in 4 hr 4 min".to_string(),
+            "1% used".to_string(),
+            "All models".to_string(),
+            "Resets Thu 9:00 AM".to_string(),
+            "18% used".to_string(),
+            "Sonnet only".to_string(),
+            "13% used".to_string(),
+        ];
+        let limits = parse_usage_limits(&names);
+        assert_eq!(limits.len(), 2);
+        assert_eq!(
+            limits_line(
+                &limits,
+                LimitVisibility {
+                    enabled: true,
+                    show_5h: true,
+                    show_all: true,
+                }
+            )
+            .as_deref(),
+            Some("Limits (2): 5h 1% | All 18%")
+        );
+        assert_eq!(
+            limits_line(
+                &limits,
+                LimitVisibility {
+                    enabled: true,
+                    show_5h: false,
+                    show_all: true,
+                }
+            )
+            .as_deref(),
+            Some("Limits (1): All 18%")
+        );
+        assert_eq!(
+            limits_line(
+                &[],
+                LimitVisibility {
+                    enabled: true,
+                    show_5h: true,
+                    show_all: false,
+                }
+            )
+            .as_deref(),
+            None
+        );
+        assert_eq!(limits[0].reset.as_deref(), Some("in 4 hr 4 min"));
+    }
+
+    #[test]
+    fn merges_and_normalizes_limit_cache() {
+        let cached = vec![
+            UsageLimitEntry {
+                label: "session".into(),
+                used_percent: 2,
+                reset: None,
+                updated_at_ms: 1_000,
+            },
+            UsageLimitEntry {
+                label: "all".into(),
+                used_percent: 18,
+                reset: None,
+                updated_at_ms: 1_000,
+            },
+        ];
+        let detected = vec![UsageLimitEntry {
+            label: "5h".into(),
+            used_percent: 3,
+            reset: None,
+            updated_at_ms: 0,
+        }];
+
+        let limits = merge_limit_entries(&cached, &detected, 2_000);
+        assert!(limits.iter().all(|entry| entry.updated_at_ms != 0));
+        assert_eq!(
+            limits
+                .iter()
+                .find(|entry| entry.label == "5h")
+                .unwrap()
+                .updated_at_ms,
+            2_000
+        );
+        assert_eq!(
+            limits_line(
+                &limits,
+                LimitVisibility {
+                    enabled: true,
+                    show_5h: true,
+                    show_all: true,
+                }
+            )
+            .as_deref(),
+            Some("Limits (2): 5h 3% | All 18%")
+        );
+    }
 }

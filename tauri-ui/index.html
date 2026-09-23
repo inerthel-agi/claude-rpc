@@ -98,23 +98,15 @@
               <button type="button" id="provider-toggle" class="toggle" aria-pressed="true">Provider</button>
               <button type="button" id="effort-toggle" class="toggle" aria-pressed="true">Effort</button>
               <button type="button" id="session-title-toggle" class="toggle" aria-pressed="true">Session title</button>
-              <button type="button" id="cost-toggle" class="toggle" aria-pressed="false">Cost</button>
-              <button type="button" id="cost-total-toggle" class="toggle" aria-pressed="false">Total</button>
-              <button type="button" id="project-tokens-toggle" class="toggle" aria-pressed="false">Proj tokens</button>
-              <button type="button" id="all-tokens-toggle" class="toggle" aria-pressed="false">All tokens</button>
             </div>
-            <p>Controls provider, effort, session title, per-model cost, all-projects $ total, current-project tokens, and all-projects token total labels in Discord RPC.</p>
+            <p>Controls provider, effort, and session title labels in Discord RPC.</p>
             <label>Limits</label>
             <div class="limit-controls">
               <button type="button" id="limits-toggle" class="toggle" aria-pressed="true">Shown</button>
               <button type="button" id="limit-5h-toggle" class="toggle compact" aria-pressed="true">5h</button>
               <button type="button" id="limit-all-toggle" class="toggle compact" aria-pressed="true">All</button>
-              <button type="button" id="limit-sonnet-toggle" class="toggle compact" aria-pressed="true">Sonnet only</button>
               <button type="button" id="refresh-limits" class="ghost">Refresh</button>
             </div>
-            <label>Debug</label>
-            <button type="button" id="debug-toggle" class="toggle" aria-pressed="false">Debug off</button>
-            <p>Writes UIAutomation dump to .claude-rpc/ui-debug.json.</p>
           </div>
         </div>
       </section>
@@ -138,19 +130,6 @@
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel cost-panel" data-section="cost" hidden>
-        <button type="button" class="legend section-toggle" aria-expanded="true">
-          <span class="legend-label">Usage cost</span>
-          <span class="legend-summary"></span>
-        </button>
-        <div class="panel-content">
-          <div class="panel-inner">
-            <div id="cost-body" class="cost-body"></div>
-            <p class="cost-note">Current session is computed live from the session log (cache included). All projects use Claude's own per-model accounting. The in/out figures are the table-rate split of input/output tokens.</p>
           </div>
         </div>
       </section>

@@ -20,7 +20,6 @@
   --button: #222221;
   --button-hover: #2b2b2a;
   --status-bg: #191918;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
   --focus: rgba(224, 131, 100, 0.3);
   --glass-border: var(--line);
   --inset: none;
@@ -50,7 +49,6 @@ body[data-theme="light"] {
   --button: #f5f2eb;
   --button-hover: #eae6dc;
   --status-bg: #f0eee4;
-  --shadow: 0 6px 20px rgba(124, 121, 110, 0.08), 0 1px 4px rgba(124, 121, 110, 0.04);
   --focus: rgba(217, 119, 87, 0.25);
   --glass-border: var(--line);
   --inset: none;
@@ -121,7 +119,6 @@ select {
   height: 32px;
   border-radius: 8px;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 h1 {
@@ -185,8 +182,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: var(--shadow);
-  transition: padding 0.3s var(--ease-smooth), background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+  transition: padding 0.3s var(--ease-smooth), background-color 0.3s, border-color 0.3s;
   animation: fadeUp 0.4s var(--ease-smooth) forwards;
 }
 
@@ -468,7 +464,7 @@ button:disabled {
   min-width: 132px;
 }
 
-/* The 5h / All / Sonnet only filters are multi-select chips, not
+/* The 5h / All filters are multi-select chips, not
    switches: drop the switch pseudo-elements (the source of the overlap) and size
    each chip to its label. Active state is shown via the .toggle.active fill. */
 .limit-controls .compact {
@@ -488,98 +484,6 @@ button:disabled {
 .limit-controls #refresh-limits {
   flex: 0 0 auto;
   margin-left: auto;
-}
-
-/* Usage cost panel */
-.cost-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.cost-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cost-group-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
-.cost-row {
-  display: grid;
-  grid-template-columns: minmax(60px, max-content) minmax(56px, max-content) 1fr;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 13px;
-}
-
-.cost-model {
-  font-weight: 600;
-}
-
-.cost-amount {
-  font-weight: 600;
-  color: var(--primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.cost-detail {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.cost-empty {
-  color: var(--muted);
-}
-
-.cost-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-top: 4px;
-  padding-top: 6px;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-}
-
-.cost-total-label {
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.cost-total-right {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.cost-total-tokens {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.cost-total-amount {
-  font-weight: 700;
-  color: var(--primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.cost-note {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 /* RPC Preview panel */
@@ -608,8 +512,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: var(--shadow);
-  transition: transform 0.25s var(--ease-smooth), border-color 0.25s var(--ease-smooth), box-shadow 0.25s var(--ease-smooth);
+  transition: transform 0.25s var(--ease-smooth), border-color 0.25s var(--ease-smooth);
 }
 
 .rpc-card:hover {
@@ -623,7 +526,6 @@ button:disabled {
   height: 64px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   transition: transform 0.3s var(--ease-smooth);
 }
 
@@ -766,11 +668,6 @@ button:focus-visible {
   color: var(--text);
   font-weight: 600;
   border-color: var(--line-strong);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-}
-
-body[data-theme="dark"] .theme-switch button.active {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
 }
 
 /* Footer layout */

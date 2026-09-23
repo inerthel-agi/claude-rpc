@@ -14,7 +14,6 @@
   --hover: #2b2b2a;
   --danger: #e5484d;
   --danger-weak: rgba(229, 72, 77, 0.14);
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   --knob: #f5f4ef;
 
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
@@ -36,7 +35,6 @@ body[data-theme="light"] {
   --hover: #eae6dc;
   --danger: #d13438;
   --danger-weak: rgba(209, 52, 56, 0.12);
-  --shadow: 0 12px 40px rgba(60, 55, 45, 0.22), 0 2px 8px rgba(60, 55, 45, 0.1);
   --knob: #ffffff;
 }
 
@@ -70,7 +68,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 6px;
-  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
@@ -266,7 +263,6 @@ body {
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 
 /* Quit */

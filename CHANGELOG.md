@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.7.0 (2026-09-23)
+
+### Added
+- Claude Fable 5.1, Opus 5.5, Sonnet 5, and Haiku 4.5 model IDs and display names are recognized across CLI and Desktop detection.
+- macOS Code detection recognizes bare `fable-` model tokens.
+
+### Changed
+- Model version parsing ignores snapshot dates; bare family names now resolve to Fable 5.1, Opus 5.5, Sonnet 5, or Haiku 4.5. The `opusplan` label no longer embeds a version.
+- Removed cost and token accounting, debug output, the Sonnet-only limit, and decorative shadows from settings and the tray.
+- Updated vulnerable Rust dependencies and the updater signing key. Existing installations require one manual installation of v3.7.0 to trust the new key; automatic updates resume afterwards.
+
+### Fixed
+- The Chrome native host no longer appears as an active Claude Code session. Discord presence clears when neither Claude Code nor Claude Desktop is running, even if a recent session log remains.
+
 ## v3.6.0 (2026-07-07)
 
 ### Changed

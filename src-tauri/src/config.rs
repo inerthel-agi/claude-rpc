@@ -24,25 +24,13 @@ pub(crate) struct ClaudeConfig {
     #[serde(default = "default_show_limits")]
     pub(crate) show_limit_all: bool,
     #[serde(default = "default_show_limits")]
-    pub(crate) show_limit_sonnet: bool,
-    #[serde(default = "default_show_limits")]
     pub(crate) show_provider: bool,
     #[serde(default = "default_show_limits")]
     pub(crate) show_effort: bool,
     #[serde(default = "default_show_limits")]
     pub(crate) show_session_title: bool,
     #[serde(default)]
-    pub(crate) show_cost: bool,
-    #[serde(default)]
-    pub(crate) show_cost_total: bool,
-    #[serde(default)]
-    pub(crate) show_project_tokens: bool,
-    #[serde(default)]
-    pub(crate) show_all_tokens: bool,
-    #[serde(default)]
     pub(crate) show_idle: bool,
-    #[serde(default)]
-    pub(crate) verbose: bool,
     #[serde(default = "default_rpc_mode")]
     pub(crate) rpc_mode: String,
     #[serde(default = "default_buttons")]
@@ -56,16 +44,10 @@ impl Default for ClaudeConfig {
             show_limits: default_show_limits(),
             show_limit_5h: default_show_limits(),
             show_limit_all: default_show_limits(),
-            show_limit_sonnet: default_show_limits(),
             show_provider: default_show_limits(),
             show_effort: default_show_limits(),
             show_session_title: default_show_limits(),
-            show_cost: false,
-            show_cost_total: false,
-            show_project_tokens: false,
-            show_all_tokens: false,
             show_idle: false,
-            verbose: false,
             rpc_mode: default_rpc_mode(),
             buttons: default_buttons(),
         }

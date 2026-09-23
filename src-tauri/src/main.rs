@@ -68,21 +68,10 @@ struct ClaudeStatus {
     limits_line: Option<String>,
     provider_line: String,
     discord_line: String,
-    debug_line: Option<String>,
     preview_header: Option<String>,
     preview_primary: Option<String>,
     preview_secondary: Option<String>,
     preview_tertiary: Option<String>,
-    cost_shown: bool,
-    cost_line: Option<String>,
-    cost_total_shown: bool,
-    cost_total_line: Option<String>,
-    project_tokens_shown: bool,
-    project_tokens_line: Option<String>,
-    all_tokens_shown: bool,
-    all_tokens_line: Option<String>,
-    model_costs_all: Value,
-    model_costs_current: Value,
     daemon_running: bool,
     daemon_pid: Option<u32>,
     daemon_error: Option<String>,
@@ -146,10 +135,6 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
             .and_then(Value::as_str)
             .unwrap_or("Discord: RPC disabled")
             .to_string(),
-        debug_line: value
-            .get("debugLine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
         preview_header: value
             .get("previewHeader")
             .and_then(Value::as_str)
@@ -166,46 +151,6 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
             .get("previewTertiary")
             .and_then(Value::as_str)
             .map(str::to_string),
-        cost_shown: value
-            .get("costShown")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        cost_line: value
-            .get("costLine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        cost_total_shown: value
-            .get("costTotalShown")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        cost_total_line: value
-            .get("costTotalLine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        project_tokens_shown: value
-            .get("projectTokensShown")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        project_tokens_line: value
-            .get("projectTokensLine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        all_tokens_shown: value
-            .get("allTokensShown")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        all_tokens_line: value
-            .get("allTokensLine")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        model_costs_all: value
-            .get("modelCostsAll")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
-        model_costs_current: value
-            .get("modelCostsCurrent")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
         daemon_running: daemon.running,
         daemon_pid: daemon.pid,
         daemon_error: daemon.error,

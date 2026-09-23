@@ -18,7 +18,8 @@ Tauri-based Discord Rich Presence for Claude Code and Claude Desktop on Windows 
 - Claude Code model/project/session timestamp from `~/.claude/projects/*.jsonl`, including `/model` command output
 - Model detection uses a per-session cache and `~/.claude.json` fallback during long loads or large attachments
 - Provider detection from Claude settings, env, API key helpers, `~/.claude.json`, or OAuth credential patterns
-- Usage limit display with cached values: 5h, All, Sonnet only, Design
+- Usage limit display with cached values: 5h and All
+- Model names for the current Claude Fable 5.1, Opus 5.5, Sonnet 5, and Haiku 4.5 IDs
 - Optional visibility toggles for provider, effort, session title, and usage limits
 - RPC modes: Playing, Watching, Listening, Competing
 - Optional Discord buttons in Watching mode
@@ -31,11 +32,9 @@ Tauri-based Discord Rich Presence for Claude Code and Claude Desktop on Windows 
 Use the latest GitHub release:
 
 - `claude-rpc.exe` - portable app
-- `Claude RPC_3.3.0_x64-setup.exe` - Windows installer
-- `Claude RPC_3.3.0_aarch64.dmg` - macOS Apple Silicon app
-- `claude-rpc-macos-arm64` - macOS portable binary
+- `Claude.RPC_3.7.0_x64-setup.exe` - Windows installer
 
-Once installed, the app keeps itself up to date: it checks the latest signed release on startup and offers to install new versions from the settings window or tray menu.
+Install v3.7.0 manually if you have an earlier version: its updater signing key has changed. After that installation, the app can verify and offer later signed updates from the settings window or tray menu.
 
 ## Build
 
@@ -56,7 +55,7 @@ Outputs:
 
 ```text
 bin\claude-rpc.exe
-src-tauri\target\release\bundle\nsis\Claude RPC_3.3.0_x64-setup.exe
+src-tauri\target\release\bundle\nsis\Claude RPC_3.7.0_x64-setup.exe
 ```
 
 Build macOS:
@@ -72,7 +71,7 @@ Outputs:
 ```text
 bin/claude-rpc-macos-arm64
 src-tauri/target/release/bundle/macos/Claude RPC.app
-src-tauri/target/release/bundle/dmg/Claude RPC_3.3.0_aarch64.dmg
+src-tauri/target/release/bundle/dmg/Claude RPC_3.7.0_aarch64.dmg
 ```
 
 ## Configuration
@@ -92,8 +91,6 @@ Example:
   "showLimits": true,
   "showLimit5h": true,
   "showLimitAll": true,
-  "showLimitSonnet": true,
-  "showLimitDesign": true,
   "showProvider": true,
   "showEffort": true,
   "showSessionTitle": true,
@@ -113,7 +110,7 @@ Example:
 | Claude Desktop mode | `%APPDATA%\Claude\claude_desktop_config.json` + UI Automation on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS |
 | Claude Desktop model/effort | UI Automation labels on Windows; Chat/Cowork local storage, Cowork local agent sessions, Code session fallback, and `ccd-effort-level` on macOS |
 | Claude usage limits | UI Automation on Usage page + `.claude-rpc\limits-cache.json` on Windows, cached values on macOS |
-| Claude Code | `claude.exe`/`claude` process path or recent JSONL activity |
+| Claude Code | `claude.exe`/`claude` process on Windows/macOS, excluding the Chrome native host; recent JSONL activity fallback on other platforms |
 | Claude Code model | active JSONL session tail and `/model` command output, then `~\.claude\settings.json`, env vars, and `~\.claude.json` recent usage as fallbacks; cached per session |
 | Provider | Claude env/settings, API key helpers, `~/.claude.json` OAuth account, Bedrock, Vertex, or Foundry markers |
 
