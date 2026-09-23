@@ -4,7 +4,7 @@ const appWindow = window.__TAURI__.window.getCurrentWindow();
 const presets = {
   claude: ['Claude', 'https://claude.ai'],
   desktop: ['Claude Desktop', 'https://claude.ai/download'],
-  repo: ['GitHub Repo', 'https://github.com/stealthsrc/claude-rpc'],
+  repo: ['GitHub Repo', 'https://github.com/inerthel-agi/claude-rpc'],
 };
 
 const fields = {
