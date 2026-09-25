@@ -3,7 +3,6 @@
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
 
   /* Anthropic Dark Palette (mirrors styles.css) */
-  --bg: #141413;
   --surface: #1d1d1b;
   --line: #2a2a28;
   --line-strong: #3f3f3c;
@@ -24,7 +23,6 @@ body[data-theme="light"] {
   color-scheme: light;
 
   /* Anthropic Light Palette */
-  --bg: #faf9f5;
   --surface: #faf9f5;
   --line: #e8e6dc;
   --line-strong: #c9c7be;

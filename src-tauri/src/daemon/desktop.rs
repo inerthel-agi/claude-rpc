@@ -118,6 +118,7 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
     let mut best_model: Option<(DesktopModelCandidate, i32)> = None;
     let mut adaptive = false;
     let mut extended = false;
+    let mut explicit_effort = None;
 
     for index in 0..length {
         let Ok(element) = elements.GetElement(index) else {
@@ -143,8 +144,24 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
             .map(|value| value == UIA_ButtonControlTypeId)
             .unwrap_or(false);
 
-        if let Some(candidate) = parse_desktop_model_name(name) {
-            let score = if candidate.effort.is_some() { 4 } else { 0 }
+        let norm = normalize_ui_label(name);
+        // The Code tab composer exposes its pickers as "Model: Opus 5.5" and
+        // "Effort: Medium" buttons. Those are authoritative; free text (chat
+        // messages, the usage popover's "Weekly · Fable" / "Max (5x)") must not
+        // outrank them, so long labels are ignored as model sources.
+        let explicit_model = is_button && norm.starts_with("model: ");
+        if is_button {
+            if let Some(effort) = norm.strip_prefix("effort: ").and_then(effort_label) {
+                explicit_effort = Some(effort);
+            }
+        }
+
+        if let Some(candidate) = (explicit_model || name.len() <= 80)
+            .then(|| parse_desktop_model_name(name))
+            .flatten()
+        {
+            let score = if explicit_model { 20 } else { 0 }
+                + if candidate.effort.is_some() { 4 } else { 0 }
                 + if !offscreen { 3 } else { 1 }
                 + if is_button { 2 } else { 0 };
             if best_model
@@ -156,7 +173,7 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
             }
         }
 
-        match normalize_ui_label(name).as_str() {
+        match norm.as_str() {
             "adaptive thinking" => {
                 adaptive |= is_toggle_on(&automation, &element).unwrap_or(false);
             }
@@ -176,6 +193,9 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
         if candidate.effort.is_some() {
             info.effort = candidate.effort;
         }
+    }
+    if explicit_effort.is_some() {
+        info.effort = explicit_effort;
     }
     info.adaptive |= adaptive;
     info.extended |= extended;
@@ -583,6 +603,14 @@ pub(super) fn desktop_info_from_ui_names(
         if norm.starts_with("whats up next") || norm.starts_with("what's up next") {
             code_score += 5;
         }
+        // Inside an open Code session the home-screen markers are gone; the
+        // sidebar and header still carry these Code-only controls.
+        if norm.starts_with("new session in ") {
+            code_score += 5;
+        }
+        if norm == "remote control" || norm == "create pr" {
+            code_score += 3;
+        }
         if norm.starts_with("back at it") {
             chat_score += 4;
         }
@@ -704,5 +732,14 @@ mod tests {
         let info = desktop_info_from_ui_names(&names, Some("Chat"));
         assert_eq!(info.mode.as_deref(), Some("Cowork"));
         assert_eq!(info.submode.as_deref(), Some("Dispatch"));
+
+        // An open Code session has no home-screen markers.
+        let names = vec![
+            "New session in claude-rpc".to_string(),
+            "Remote Control".to_string(),
+            "Create PR".to_string(),
+        ];
+        let info = desktop_info_from_ui_names(&names, Some("Chat"));
+        assert_eq!(info.mode.as_deref(), Some("Code"));
     }
 }

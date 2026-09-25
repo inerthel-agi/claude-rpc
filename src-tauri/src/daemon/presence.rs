@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) -> Option<Value> {
-    if result.client == ClientType::Idle && !config.show_idle {
+    if result.client == ClientType::Idle {
         return None;
     }
 
@@ -18,7 +18,7 @@ pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) ->
         "type": activity_type,
         "created_at": now_ms(),
         "instance": false,
-        "details": build_details(result, &mode, config),
+        "details": build_details(result, &mode),
         "state": build_state(result, config),
         "assets": {
             "large_image": logo_image(),
@@ -39,7 +39,7 @@ pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) ->
     Some(activity)
 }
 
-pub(super) fn build_details(result: &DetectionResult, mode: &str, config: &ClaudeConfig) -> String {
+pub(super) fn build_details(result: &DetectionResult, mode: &str) -> String {
     let base = match (result.client, mode) {
         (ClientType::Desktop, "watching") => "Watching Claude",
         (ClientType::Code, "watching") => "Watching Claude Code",
@@ -51,26 +51,6 @@ pub(super) fn build_details(result: &DetectionResult, mode: &str, config: &Claud
     if result.client == ClientType::Desktop {
         if let Some(mode_label) = desktop_mode_label(result) {
             return format!("{base} ({mode_label})");
-        }
-    }
-
-    if result.client == ClientType::Code && config.show_session_title {
-        if let Some(title) = sanitize_field(result.session_title.as_deref(), 64) {
-            let candidate = format!("{base} - {title}");
-            if candidate.len() <= 96 {
-                return candidate;
-            }
-            if base.len() + 5 < 96 {
-                let budget = 96 - base.len() - 5;
-                let trimmed: String = title.chars().take(budget).collect();
-                return format!("{base} - {trimmed}…");
-            }
-        }
-        if let Some(repo) = sanitize_field(result.project_name.as_deref(), 32) {
-            let candidate = format!("{base} - {repo}");
-            if candidate.len() <= 96 {
-                return candidate;
-            }
         }
     }
 
@@ -156,16 +136,14 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         "model": result.model,
         "limits": result.limits_line,
         "provider": result.provider,
-        "project": result.project_name,
         "rpcMode": config.rpc_mode,
         "dnd": config.dnd,
         "showLimits": config.show_limits,
         "showLimit5h": config.show_limit_5h,
         "showLimitAll": config.show_limit_all,
+        "showLimitFable": config.show_limit_fable,
         "showProvider": config.show_provider,
         "showEffort": config.show_effort,
-        "showSessionTitle": config.show_session_title,
-        "showIdle": config.show_idle,
         "buttons": config.buttons,
     }))
     .unwrap_or_default()
@@ -176,7 +154,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hides_presence_without_a_client_when_idle_is_disabled() {
+    fn displays_client_labels_without_a_project() {
+        let mut config = ClaudeConfig::default();
+        for mode in ["playing", "watching", "listening", "competing"] {
+            config.rpc_mode = mode.into();
+            for (client, expected) in [
+                (
+                    ClientType::Code,
+                    if mode == "watching" {
+                        "Watching Claude Code"
+                    } else {
+                        "Claude Code"
+                    },
+                ),
+                (
+                    ClientType::Desktop,
+                    if mode == "watching" {
+                        "Watching Claude (Code)"
+                    } else {
+                        "Claude Desktop (Code)"
+                    },
+                ),
+            ] {
+                let result = DetectionResult {
+                    client,
+                    mode: Some("Code".into()),
+                    ..DetectionResult::default()
+                };
+                assert_eq!(
+                    build_activity(&result, &config).unwrap()["details"],
+                    expected
+                );
+                let preview_field = if mode == "playing" {
+                    "previewSecondary"
+                } else {
+                    "previewPrimary"
+                };
+                assert_eq!(
+                    build_status(&result, None, &config)[preview_field],
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hides_presence_without_a_client() {
         let mut config = ClaudeConfig::default();
         let mut result = DetectionResult::default();
         for mode in ["playing", "watching", "listening", "competing"] {
@@ -203,26 +226,26 @@ mod tests {
             client: ClientType::Desktop,
             model: Some("Claude Opus 4.7 (1M) | Extra high".into()),
             provider: "Anthropic API".into(),
-            limits_line: Some("Limits (1): 5h 3%".into()),
+            limits_line: Some("Limits: 5h 3%".into()),
             ..DetectionResult::default()
         };
         let mut config = ClaudeConfig::default();
 
         assert_eq!(
             build_state(&result, &config),
-            "Claude Opus 4.7 (1M) | Extra high | Anthropic API | Limits (1): 5h 3%"
+            "Claude Opus 4.7 (1M) | Extra high | Anthropic API | Limits: 5h 3%"
         );
 
         config.show_provider = false;
         assert_eq!(
             build_state(&result, &config),
-            "Claude Opus 4.7 (1M) | Extra high | Limits (1): 5h 3%"
+            "Claude Opus 4.7 (1M) | Extra high | Limits: 5h 3%"
         );
 
         config.show_effort = false;
         assert_eq!(
             build_state(&result, &config),
-            "Claude Opus 4.7 (1M) | Limits (1): 5h 3%"
+            "Claude Opus 4.7 (1M) | Limits: 5h 3%"
         );
     }
 }

@@ -13,21 +13,31 @@ pub(super) fn detect_provider() -> String {
         || has_value("ANTHROPIC_BEDROCK_BASE_URL")
         || has_value("AWS_BEARER_TOKEN_BEDROCK")
     {
-        "Amazon Bedrock".into()
+        "AWS Bedrock".into()
     } else if is_truthy(lookup("CLAUDE_CODE_USE_VERTEX").as_deref())
         || has_value("ANTHROPIC_VERTEX_PROJECT_ID")
     {
-        "Google GCP Vertex".into()
+        "Google Vertex".into()
     } else if is_truthy(lookup("CLAUDE_CODE_USE_FOUNDRY").as_deref()) {
-        "Microsoft Foundry".into()
+        "Microsoft Azure".into()
     } else if has_value("ANTHROPIC_API_KEY") || has_value("CLAUDE_API_KEY") {
         "Anthropic API".into()
+    } else if has_value("CLAUDE_CODE_OAUTH_TOKEN") {
+        "Subscription".into()
     } else {
         let config_texts = claude_config_texts();
-        if config_texts.iter().any(|raw| has_anthropic_api_auth(raw)) {
+        let any = |check: fn(&str) -> bool| config_texts.iter().any(|raw| check(raw));
+        // Precedence mirrors Claude Code: an apiKeyHelper beats the login, and a
+        // live subscription OAuth login beats an API key left over from an
+        // earlier Console login (both can sit on disk at the same time).
+        if any(has_api_key_helper) {
             "Anthropic API".into()
-        } else if config_texts.iter().any(|raw| has_claude_account_auth(raw)) {
-            "Claude Account".into()
+        } else if any(has_subscription_credentials) {
+            "Subscription".into()
+        } else if any(has_anthropic_api_auth) {
+            "Anthropic API".into()
+        } else if any(has_claude_account_auth) {
+            "Subscription".into()
         } else {
             "Unknown".into()
         }
@@ -76,8 +86,18 @@ pub(super) fn claude_config_texts() -> Vec<String> {
         .collect()
 }
 
+pub(super) fn has_api_key_helper(raw: &str) -> bool {
+    raw.contains("\"apiKeyHelper\"")
+}
+
+// OAuth tokens also start with "sk-ant-" ("sk-ant-oat01-…"), so only the
+// API-key prefix counts as API auth.
 pub(super) fn has_anthropic_api_auth(raw: &str) -> bool {
-    raw.contains("sk-ant-") || raw.contains("\"apiKeyHelper\"")
+    raw.contains("sk-ant-api") || has_api_key_helper(raw)
+}
+
+pub(super) fn has_subscription_credentials(raw: &str) -> bool {
+    raw.contains("\"claudeAiOauth\"")
 }
 
 pub(super) fn has_claude_account_auth(raw: &str) -> bool {
@@ -95,7 +115,14 @@ mod tests {
         assert!(has_anthropic_api_auth(
             r#"{"apiKeyHelper":"/usr/local/bin/anthropic-key"}"#
         ));
-        assert!(has_anthropic_api_auth(r#"{"key":"sk-ant-redacted"}"#));
+        assert!(has_anthropic_api_auth(r#"{"key":"sk-ant-api03-redacted"}"#));
+        // A subscription OAuth token is not an API key.
+        assert!(!has_anthropic_api_auth(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-redacted"}}"#
+        ));
+        assert!(has_subscription_credentials(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-redacted"}}"#
+        ));
         assert!(has_claude_account_auth(
             r#"{"oauthAccount":{"email":"user@example.com"}}"#
         ));

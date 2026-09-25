@@ -24,13 +24,11 @@ pub(crate) struct ClaudeConfig {
     #[serde(default = "default_show_limits")]
     pub(crate) show_limit_all: bool,
     #[serde(default = "default_show_limits")]
+    pub(crate) show_limit_fable: bool,
+    #[serde(default = "default_show_limits")]
     pub(crate) show_provider: bool,
     #[serde(default = "default_show_limits")]
     pub(crate) show_effort: bool,
-    #[serde(default = "default_show_limits")]
-    pub(crate) show_session_title: bool,
-    #[serde(default)]
-    pub(crate) show_idle: bool,
     #[serde(default = "default_rpc_mode")]
     pub(crate) rpc_mode: String,
     #[serde(default = "default_buttons")]
@@ -44,10 +42,9 @@ impl Default for ClaudeConfig {
             show_limits: default_show_limits(),
             show_limit_5h: default_show_limits(),
             show_limit_all: default_show_limits(),
+            show_limit_fable: default_show_limits(),
             show_provider: default_show_limits(),
             show_effort: default_show_limits(),
-            show_session_title: default_show_limits(),
-            show_idle: false,
             rpc_mode: default_rpc_mode(),
             buttons: default_buttons(),
         }

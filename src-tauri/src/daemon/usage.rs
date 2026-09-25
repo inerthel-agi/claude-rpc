@@ -37,6 +37,7 @@ pub(crate) struct LimitVisibility {
     pub(crate) enabled: bool,
     pub(crate) show_5h: bool,
     pub(crate) show_all: bool,
+    pub(crate) show_fable: bool,
 }
 
 pub(crate) fn limit_visibility(config: &ClaudeConfig) -> LimitVisibility {
@@ -44,6 +45,7 @@ pub(crate) fn limit_visibility(config: &ClaudeConfig) -> LimitVisibility {
         enabled: config.show_limits,
         show_5h: config.show_limit_5h,
         show_all: config.show_limit_all,
+        show_fable: config.show_limit_fable,
     }
 }
 
@@ -52,6 +54,15 @@ pub(crate) fn parse_usage_limits(names: &[String]) -> Vec<UsageLimitEntry> {
     let mut entries = Vec::new();
 
     for (index, name) in names.iter().enumerate() {
+        if let Some(entry) = parse_usage_button(name) {
+            if !entries
+                .iter()
+                .any(|existing: &UsageLimitEntry| existing.label == entry.label)
+            {
+                entries.push(entry);
+            }
+            continue;
+        }
         let Some(used_percent) = parse_used_percent(name) else {
             continue;
         };
@@ -76,9 +87,53 @@ pub(crate) fn parse_usage_limits(names: &[String]) -> Vec<UsageLimitEntry> {
     entries
 }
 
+// The Code tab composer's usage button is always on screen, even with the
+// popover closed: "Usage: Context 146.8k / 1M (15%), 6% of 5-hour limit,
+// Resets in 4 hr 33 min". Only the 5-hour bucket is exposed there.
+#[cfg(any(windows, test))]
+pub(crate) fn parse_usage_button(value: &str) -> Option<UsageLimitEntry> {
+    let lower = value.to_ascii_lowercase();
+    if !lower.starts_with("usage:") {
+        return None;
+    }
+    let segments = lower.split(',').map(str::trim).collect::<Vec<_>>();
+    let index = segments
+        .iter()
+        .position(|segment| segment.ends_with("% of 5-hour limit"))?;
+    let used_percent = segments[index]
+        .split('%')
+        .next()?
+        .trim()
+        .parse::<u32>()
+        .ok()?
+        .min(100) as u8;
+    let reset = segments
+        .get(index + 1)
+        .and_then(|segment| segment.strip_prefix("resets "))
+        .map(|reset| reset.trim().to_string());
+    Some(UsageLimitEntry {
+        label: "5h".into(),
+        used_percent,
+        reset,
+        updated_at_ms: 0,
+    })
+}
+
 #[cfg(any(windows, test))]
 pub(crate) fn parse_used_percent(value: &str) -> Option<u8> {
     let lower = value.to_ascii_lowercase();
+    // The current usage popover shows a bare "6%" under each bucket label; the
+    // older layout said "6% used".
+    let bare = lower.trim();
+    if bare.len() > 1
+        && bare.ends_with('%')
+        && bare[..bare.len() - 1].chars().all(|ch| ch.is_ascii_digit())
+    {
+        return bare[..bare.len() - 1]
+            .parse::<u32>()
+            .ok()
+            .map(|value| value.min(100) as u8);
+    }
     if !lower.contains("used") || !lower.contains('%') {
         return None;
     }
@@ -94,7 +149,7 @@ pub(crate) fn parse_used_percent(value: &str) -> Option<u8> {
         .collect::<String>();
     // Parse wide then clamp to 100: an over-limit/glitched scrape (>100, or >255
     // which would overflow u8 -> None) must not silently drop the row and skew the
-    // "Limits (N)" count — mirror the OAuth path's clamp(0,100).
+    // limits line — mirror the OAuth path's clamp(0,100).
     digits.parse::<u32>().ok().map(|value| value.min(100) as u8)
 }
 
@@ -102,9 +157,15 @@ pub(crate) fn parse_used_percent(value: &str) -> Option<u8> {
 pub(crate) fn find_limit_label(names: &[String], usage_index: usize) -> Option<(String, usize)> {
     let start = usage_index.saturating_sub(12);
     for index in (start..usage_index).rev() {
-        let label = match normalize_ui_label(&names[index]).as_str() {
-            "current session" => "5h",
+        let norm = normalize_ui_label(&names[index]);
+        let label = match norm.as_str() {
+            "current session" | "5-hour limit" => "5h",
             "all models" => "All",
+            // Current popover: "Weekly · all models" and the per-model
+            // "Weekly · Fable" bucket; other per-model buckets are ignored.
+            _ if norm.starts_with("weekly") && norm.ends_with("all models") => "All",
+            _ if norm.starts_with("weekly") && norm.ends_with("fable") => "Fable",
+            _ if norm.starts_with("weekly") => return None,
             _ => continue,
         };
         return Some((label.into(), index));
@@ -151,9 +212,8 @@ pub(crate) fn limits_line(
     if parts.is_empty() {
         return None;
     }
-    let count = parts.len();
     let parts = parts.join(" | ");
-    Some(truncate(format!("Limits ({count}): {parts}"), 128))
+    Some(truncate(format!("Limits: {parts}"), 128))
 }
 
 pub(crate) fn visible_limit_labels(visibility: LimitVisibility) -> Vec<&'static str> {
@@ -163,6 +223,9 @@ pub(crate) fn visible_limit_labels(visibility: LimitVisibility) -> Vec<&'static 
     }
     if visibility.show_all {
         labels.push("All");
+    }
+    if visibility.show_fable {
+        labels.push("Fable");
     }
     labels
 }
@@ -178,18 +241,22 @@ pub(crate) fn current_limits(
         }
     }
 
+    // OAuth keeps polling (at its own cadence) even while Desktop is scraped:
+    // with the usage popover closed Desktop only exposes the 5-hour bucket, and
+    // skipping OAuth would let the weekly bucket expire from the display.
+    let oauth_limits = maybe_fetch_oauth_limits(machine, now).unwrap_or_default();
+    let mut changed = false;
+    if !oauth_limits.is_empty() {
+        machine.cached_limits = merge_limit_entries(&machine.cached_limits, &oauth_limits, now);
+        changed = true;
+    }
+    // Desktop is merged last: it is read every scan, so it is the freshest value.
     if !detected_limits.is_empty() {
         machine.cached_limits = merge_limit_entries(&machine.cached_limits, detected_limits, now);
-        write_limits_cache(now, &machine.cached_limits);
-        return fresh_limit_entries(&machine.cached_limits, now);
+        changed = true;
     }
-
-    if let Some(oauth_limits) = maybe_fetch_oauth_limits(machine, now) {
-        if !oauth_limits.is_empty() {
-            machine.cached_limits = merge_limit_entries(&machine.cached_limits, &oauth_limits, now);
-            write_limits_cache(now, &machine.cached_limits);
-            return fresh_limit_entries(&machine.cached_limits, now);
-        }
+    if changed {
+        write_limits_cache(now, &machine.cached_limits);
     }
 
     fresh_limit_entries(&machine.cached_limits, now)
@@ -302,6 +369,32 @@ pub(crate) fn parse_oauth_usage_response(body: &Value) -> Vec<UsageLimitEntry> {
             updated_at_ms: 0,
         });
     }
+    // Per-model weekly caps only appear in the `limits` array, e.g.
+    // {"kind":"weekly_scoped","percent":0,"scope":{"model":{"display_name":"Fable"}}}.
+    if let Some(limits) = body.get("limits").and_then(Value::as_array) {
+        for limit in limits {
+            let is_fable = limit.get("kind").and_then(Value::as_str) == Some("weekly_scoped")
+                && limit
+                    .pointer("/scope/model/display_name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.eq_ignore_ascii_case("fable"));
+            let Some(percent) = limit.get("percent").and_then(Value::as_f64) else {
+                continue;
+            };
+            if is_fable {
+                entries.push(UsageLimitEntry {
+                    label: "Fable".into(),
+                    used_percent: percent.round().clamp(0.0, 100.0) as u8,
+                    reset: limit
+                        .get("resets_at")
+                        .and_then(Value::as_str)
+                        .map(String::from),
+                    updated_at_ms: 0,
+                });
+                break;
+            }
+        }
+    }
     entries
 }
 
@@ -393,6 +486,7 @@ pub(crate) fn normalize_limit_label(label: &str) -> Option<&'static str> {
     match normalize_ui_label(label).as_str() {
         "5h" | "session" | "current session" => Some("5h"),
         "all" | "all models" => Some("All"),
+        "fable" => Some("Fable"),
         _ => None,
     }
 }
@@ -401,6 +495,7 @@ pub(crate) fn sort_limit_entries(entries: &mut [UsageLimitEntry]) {
     entries.sort_by_key(|entry| match entry.label.as_str() {
         "5h" => 0,
         "All" => 1,
+        "Fable" => 2,
         _ => 9,
     });
 }
@@ -408,6 +503,77 @@ pub(crate) fn sort_limit_entries(entries: &mut [UsageLimitEntry]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_oauth_fable_weekly_limit() {
+        let body = json!({
+            "five_hour": {"utilization": 11.0, "resets_at": "2026-09-25T20:19:59+00:00"},
+            "seven_day": {"utilization": 1.0, "resets_at": "2026-09-27T01:59:59+00:00"},
+            "limits": [
+                {"kind": "session", "percent": 11, "scope": null},
+                {"kind": "weekly_all", "percent": 1, "scope": null},
+                {
+                    "kind": "weekly_scoped",
+                    "percent": 4,
+                    "resets_at": "2026-09-27T01:59:59+00:00",
+                    "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}
+                }
+            ]
+        });
+        let limits = parse_oauth_usage_response(&body);
+        let labels = limits
+            .iter()
+            .map(|entry| (entry.label.as_str(), entry.used_percent))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, [("5h", 11), ("All", 1), ("Fable", 4)]);
+    }
+
+    #[test]
+    fn parses_current_desktop_usage_layout() {
+        // Popover open: bare percentages under "5-hour limit", "Weekly · all
+        // models" and the per-model "Weekly · Fable" bucket.
+        let names = [
+            "Usage: Context 146.8k / 1M (15%), 6% of 5-hour limit, Resets in 4 hr 33 min",
+            "Plan usage limits",
+            "Max (5x)",
+            "5-hour limit",
+            "6%",
+            "5-hour limit",
+            "Weekly \u{b7} all models",
+            "Resets Sun 4:00 AM",
+            "3%",
+            "Weekly \u{b7} all models",
+            "Weekly \u{b7} Fable",
+            "Resets Sun 4:00 AM",
+            "9%",
+        ]
+        .map(String::from);
+        let limits = parse_usage_limits(&names);
+        assert_eq!(limits.len(), 3);
+        assert_eq!(
+            (limits[2].label.as_str(), limits[2].used_percent),
+            ("Fable", 9)
+        );
+        assert_eq!(
+            (limits[0].label.as_str(), limits[0].used_percent),
+            ("5h", 6)
+        );
+        assert_eq!(limits[0].reset.as_deref(), Some("in 4 hr 33 min"));
+        assert_eq!(
+            (limits[1].label.as_str(), limits[1].used_percent),
+            ("All", 3)
+        );
+
+        // Popover closed: only the composer button is on screen.
+        let limits = parse_usage_limits(&[
+            "Usage: Context 117.9k / 1M (12%), 2% of 5-hour limit, Resets in 4 hr 44 min".into(),
+        ]);
+        assert_eq!(limits.len(), 1);
+        assert_eq!(
+            (limits[0].label.as_str(), limits[0].used_percent),
+            ("5h", 2)
+        );
+    }
 
     #[test]
     fn parses_usage_limits() {
@@ -431,10 +597,11 @@ mod tests {
                     enabled: true,
                     show_5h: true,
                     show_all: true,
+                    show_fable: false,
                 }
             )
             .as_deref(),
-            Some("Limits (2): 5h 1% | All 18%")
+            Some("Limits: 5h 1% | All 18%")
         );
         assert_eq!(
             limits_line(
@@ -443,10 +610,11 @@ mod tests {
                     enabled: true,
                     show_5h: false,
                     show_all: true,
+                    show_fable: false,
                 }
             )
             .as_deref(),
-            Some("Limits (1): All 18%")
+            Some("Limits: All 18%")
         );
         assert_eq!(
             limits_line(
@@ -455,6 +623,7 @@ mod tests {
                     enabled: true,
                     show_5h: true,
                     show_all: false,
+                    show_fable: false,
                 }
             )
             .as_deref(),
@@ -503,10 +672,11 @@ mod tests {
                     enabled: true,
                     show_5h: true,
                     show_all: true,
+                    show_fable: false,
                 }
             )
             .as_deref(),
-            Some("Limits (2): 5h 3% | All 18%")
+            Some("Limits: 5h 3% | All 18%")
         );
     }
 }

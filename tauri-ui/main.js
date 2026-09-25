@@ -10,13 +10,12 @@ const presets = {
 const fields = {
   mode: document.querySelector('#rpc-mode'),
   dndToggle: document.querySelector('#dnd-toggle'),
-  idleToggle: document.querySelector('#idle-toggle'),
   providerToggle: document.querySelector('#provider-toggle'),
   effortToggle: document.querySelector('#effort-toggle'),
-  sessionTitleToggle: document.querySelector('#session-title-toggle'),
   limitsToggle: document.querySelector('#limits-toggle'),
   limit5hToggle: document.querySelector('#limit-5h-toggle'),
   limitAllToggle: document.querySelector('#limit-all-toggle'),
+  limitFableToggle: document.querySelector('#limit-fable-toggle'),
   refreshLimits: document.querySelector('#refresh-limits'),
   labels: [document.querySelector('#label0'), document.querySelector('#label1')],
   urls: [document.querySelector('#url0'), document.querySelector('#url1')],
@@ -54,13 +53,12 @@ function readForm() {
   return {
     ...currentConfig,
     dnd: fields.dndToggle.dataset.enabled === 'true',
-    showIdle: fields.idleToggle.dataset.enabled === 'true',
     showLimits: fields.limitsToggle.dataset.enabled === 'true',
     showLimit5h: fields.limit5hToggle.dataset.enabled === 'true',
     showLimitAll: fields.limitAllToggle.dataset.enabled === 'true',
+    showLimitFable: fields.limitFableToggle.dataset.enabled === 'true',
     showProvider: fields.providerToggle.dataset.enabled === 'true',
     showEffort: fields.effortToggle.dataset.enabled === 'true',
-    showSessionTitle: fields.sessionTitleToggle.dataset.enabled === 'true',
     rpcMode: fields.mode.value,
     buttons,
   };
@@ -70,13 +68,12 @@ function writeForm(config) {
   currentConfig = config || {};
   fields.mode.value = currentConfig.rpcMode || 'playing';
   syncToggle(fields.dndToggle, !!currentConfig.dnd, 'DND');
-  syncToggle(fields.idleToggle, !!currentConfig.showIdle, 'Idle', 'on', 'off');
   syncToggle(fields.providerToggle, currentConfig.showProvider !== false, 'Provider', '', '');
   syncToggle(fields.effortToggle, currentConfig.showEffort !== false, 'Effort', '', '');
-  syncToggle(fields.sessionTitleToggle, currentConfig.showSessionTitle !== false, 'Session title', '', '');
   syncToggle(fields.limitsToggle, currentConfig.showLimits !== false, '', 'Shown', 'Hidden');
   syncToggle(fields.limit5hToggle, currentConfig.showLimit5h !== false, '5h', '', '');
   syncToggle(fields.limitAllToggle, currentConfig.showLimitAll !== false, 'All', '', '');
+  syncToggle(fields.limitFableToggle, currentConfig.showLimitFable !== false, 'Fable', '', '');
   syncLimitControls();
   for (let i = 0; i < 2; i += 1) {
     fields.labels[i].value = currentConfig.buttons?.[i]?.label || '';
@@ -103,7 +100,7 @@ function syncMode() {
 
 function syncLimitControls() {
   const enabled = fields.limitsToggle.dataset.enabled === 'true';
-  [fields.limit5hToggle, fields.limitAllToggle].forEach(
+  [fields.limit5hToggle, fields.limitAllToggle, fields.limitFableToggle].forEach(
     (button) => {
       button.disabled = !enabled;
     },
@@ -328,14 +325,9 @@ fields.dndToggle.addEventListener('click', () => {
   syncToggle(fields.dndToggle, fields.dndToggle.dataset.enabled !== 'true', 'DND');
   scheduleSave();
 });
-fields.idleToggle.addEventListener('click', () => {
-  syncToggle(fields.idleToggle, fields.idleToggle.dataset.enabled !== 'true', 'Idle', 'on', 'off');
-  scheduleSave();
-});
 [
   fields.providerToggle,
   fields.effortToggle,
-  fields.sessionTitleToggle,
 ].forEach(
   (button) => {
     button.addEventListener('click', () => {
@@ -359,6 +351,7 @@ fields.limitsToggle.addEventListener('click', () => {
 [
   [fields.limit5hToggle, '5h'],
   [fields.limitAllToggle, 'All'],
+  [fields.limitFableToggle, 'Fable'],
 ].forEach(([button, label]) => {
   button.addEventListener('click', () => {
     syncToggle(button, button.dataset.enabled !== 'true', label, '', '');

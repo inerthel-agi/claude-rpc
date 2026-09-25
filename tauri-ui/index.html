@@ -90,23 +90,25 @@
             <label>DND</label>
             <button type="button" id="dnd-toggle" class="toggle" aria-pressed="false">DND off</button>
             <p>Clears Discord activity while Claude detection keeps running.</p>
-            <label>Idle presence</label>
-            <button type="button" id="idle-toggle" class="toggle" aria-pressed="false">Idle off</button>
-            <p>Shows Claude in Discord RPC even when no client is running. Displays usage limits if enabled.</p>
             <label>IPC info</label>
             <div class="rpc-info-controls">
               <button type="button" id="provider-toggle" class="toggle" aria-pressed="true">Provider</button>
               <button type="button" id="effort-toggle" class="toggle" aria-pressed="true">Effort</button>
-              <button type="button" id="session-title-toggle" class="toggle" aria-pressed="true">Session title</button>
             </div>
-            <p>Controls provider, effort, and session title labels in Discord RPC.</p>
+            <p>Controls provider and effort labels in Discord RPC.</p>
             <label>Limits</label>
             <div class="limit-controls">
               <button type="button" id="limits-toggle" class="toggle" aria-pressed="true">Shown</button>
-              <button type="button" id="limit-5h-toggle" class="toggle compact" aria-pressed="true">5h</button>
-              <button type="button" id="limit-all-toggle" class="toggle compact" aria-pressed="true">All</button>
-              <button type="button" id="refresh-limits" class="ghost">Refresh</button>
+              <div class="limit-chips" role="group" aria-label="Usage limits shown in Discord RPC">
+                <button type="button" id="limit-5h-toggle" class="toggle compact" aria-pressed="true">5h</button>
+                <button type="button" id="limit-all-toggle" class="toggle compact" aria-pressed="true">All</button>
+                <button type="button" id="limit-fable-toggle" class="toggle compact" aria-pressed="true">Fable</button>
+              </div>
             </div>
+            <p class="limit-help">
+              <span>Limits shown in Discord RPC: 5h, weekly, weekly Fable.</span>
+              <button type="button" id="refresh-limits" class="ghost">Refresh</button>
+            </p>
           </div>
         </div>
       </section>

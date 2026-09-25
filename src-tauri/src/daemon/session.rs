@@ -3,38 +3,14 @@ use super::*;
 pub(super) fn read_session_info() -> Option<SessionInfo> {
     let file = find_latest_jsonl_file(&claude_dir().join("projects"), 24 * 60 * 60 * 1000)?;
     let started_at_ms = read_session_start_ms(&file);
-    let project_name = detect_project_name(&file);
-    let session_title = read_session_title(&file);
     let model = read_session_tail(&file);
     let cwd = read_session_cwd(&file);
     Some(SessionInfo {
         file,
         started_at_ms,
-        project_name,
-        session_title,
         model,
         cwd,
     })
-}
-
-pub(super) fn read_session_title(path: &Path) -> Option<String> {
-    let lines = read_tail_lines(path, 256 * 1024)?;
-    for line in lines.iter().rev() {
-        if !line.contains("\"ai-title\"") {
-            continue;
-        }
-        let entry: Value = match serde_json::from_str(line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if entry.get("type").and_then(Value::as_str) != Some("ai-title") {
-            continue;
-        }
-        if let Some(title) = entry.get("aiTitle").and_then(Value::as_str) {
-            return sanitize_field(Some(title), 96);
-        }
-    }
-    None
 }
 
 pub(super) fn find_latest_jsonl_file(root: &Path, max_age_ms: u64) -> Option<PathBuf> {
@@ -182,21 +158,6 @@ pub(super) fn is_sidechain_entry(entry: &Value) -> bool {
         .get("isSidechain")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-}
-
-pub(super) fn detect_project_name(session_file: &Path) -> Option<String> {
-    let dir_name = session_file.parent()?.file_name()?.to_string_lossy();
-    let encoded = dir_name
-        .split("--claude-worktrees-")
-        .next()
-        .unwrap_or(&dir_name);
-    let parts = encoded
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    parts
-        .last()
-        .and_then(|value| sanitize_field(Some(value), 64))
 }
 
 pub(super) fn read_tail_lines(path: &Path, max_bytes: u64) -> Option<Vec<String>> {

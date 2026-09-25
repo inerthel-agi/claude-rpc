@@ -1,8 +1,8 @@
 [package]
 name = "claude_rpc_tray"
-version = "3.7.0"
+version = "3.8.0"
 description = "Claude RPC"
-authors = ["Inerthel"]
+authors = ["inerthel-agi"]
 license = "ISC"
 edition = "2021"
 

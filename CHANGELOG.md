@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.8.0 (2026-09-25)
+
+### Added
+- **Weekly Fable limit**: the weekly usage limit scoped to Claude Fable is now read from the usage endpoint and can be shown in Discord RPC. A new `Fable` chip in Settings → Limits toggles it (`showLimitFable` in `config.json`, on by default).
+- Claude Desktop's Code tab: the 5-hour usage shown on the composer's usage button is now read directly, so the 5h limit stays available without opening the usage popover.
+
+### Changed
+- **Provider labels**: `Amazon Bedrock` is now `AWS Bedrock`, `Google GCP Vertex` is now `Google Vertex`, `Microsoft Foundry` is now `Microsoft Azure`, and `Claude Account` is now `Subscription`.
+- **Provider detection precedence** follows Claude Code: an `apiKeyHelper` wins over a login, and an active subscription login wins over an API key left on disk by an earlier Console login. A `CLAUDE_CODE_OAUTH_TOKEN` environment variable is reported as `Subscription`.
+- The limits line no longer shows a bucket count: `Limits: 5h 3%` instead of `Limits (1): 5h 3%`.
+- Settings → Limits is laid out as a row of chips with a short help line, and the settings window uses a themed scrollbar.
+
+### Removed
+- **Idle presence**: the option to keep a Discord presence while no Claude client runs is gone. The presence now always clears when neither Claude Code nor Claude Desktop is running. The `showIdle` setting is ignored.
+- **Session title and project name**: Claude Code's details line no longer appends the session title or the project folder name. The `showSessionTitle` setting and its toggle are removed.
+- Unused internal code: the `daemon_status` command, the `version` and `summary` keys of `status.txt`, unused status fields, unused CSS variables and the `scripts/export-tauri-exe.js` alias.
+
+### Fixed
+- **Desktop model and effort detection**: in Claude Desktop's Code tab, the `Model: …` and `Effort: …` picker buttons now take precedence over free text on screen (chat messages, usage popover labels), which previously caused the wrong model or no model to be detected.
+- An open Claude Desktop Code session is now recognized as Code mode even when the home-screen markers are no longer visible.
+- The weekly limit no longer disappears when the Desktop usage popover is closed: usage-endpoint values and on-screen values are merged instead of one replacing the other.
+- Per-model weekly buckets shown in the Desktop usage popover are no longer mislabelled as the all-models weekly limit.
+- A subscription OAuth token (`sk-ant-oat…`) is no longer mistaken for an Anthropic API key.
+- Background Claude Code SDK workers started without a user session (for example by plugins, detected by `--no-session-persistence` with `--input-format stream-json`) no longer count as an active Claude Code session.
+
 ## v3.7.0 (2026-09-23)
 
 ### Added

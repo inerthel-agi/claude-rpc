@@ -29,12 +29,12 @@ pub(super) fn build_status(
     // - Watching/Listening/Competing: header is "{verb} {name}", then details
     //   (bold), then state, then large_text ("Powered by Anthropic").
     let (preview_header, preview_primary, preview_secondary, preview_tertiary) =
-        if result.client == ClientType::Idle && !config.show_idle {
+        if result.client == ClientType::Idle {
             (None, None, None, None)
         } else {
             let mode = normalize_mode(&config.rpc_mode);
             let verb = activity_verb(&mode);
-            let details = build_details(result, &mode, config);
+            let details = build_details(result, &mode);
             let state = build_state(result, config);
             if mode == "playing" {
                 (
@@ -54,8 +54,6 @@ pub(super) fn build_status(
         };
 
     json!({
-        "version": 5,
-        "summary": "Claude RPC",
         "claudeLine": claude_line,
         "modelLine": result.model.clone().unwrap_or_else(|| "Auto-detect".into()),
         "limitsLine": result.limits_line.clone(),

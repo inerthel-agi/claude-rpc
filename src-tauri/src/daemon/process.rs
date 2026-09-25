@@ -64,7 +64,7 @@ pub(super) fn is_desktop_process(process: &ProcessSnapshot) -> bool {
     if process
         .command_line
         .as_deref()
-        .is_some_and(is_chrome_native_host)
+        .is_some_and(is_background_helper)
     {
         return false;
     }
@@ -91,7 +91,7 @@ pub(super) fn is_code_process(process: &ProcessSnapshot) -> bool {
     if process
         .command_line
         .as_deref()
-        .is_some_and(is_chrome_native_host)
+        .is_some_and(is_background_helper)
     {
         return false;
     }
@@ -123,6 +123,45 @@ fn is_chrome_native_host(command: &str) -> bool {
     };
     args.and_then(|args| args.split_whitespace().next())
         .is_some_and(|arg| arg.trim_matches('"') == "--chrome-native-host")
+}
+
+fn is_background_helper(command: &str) -> bool {
+    if is_chrome_native_host(command) {
+        return true;
+    }
+
+    // claude-mem keeps a stateless SDK worker alive without a user session.
+    // Keep quoted prompt text intact so mentioning these flags cannot hide a CLI.
+    let mut quote = None;
+    let mut escaped = false;
+    let mut args = command
+        .split(|ch: char| {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if quote == Some(ch) {
+                quote = None;
+            } else if quote.is_none() && matches!(ch, '\'' | '"') {
+                quote = Some(ch);
+            }
+            quote.is_none() && ch.is_whitespace()
+        })
+        .filter(|arg| !arg.is_empty())
+        .skip(1)
+        .map(|arg| arg.trim_matches(['\'', '"']))
+        .take_while(|arg| *arg != "--");
+    let mut stateless = false;
+    let mut streaming_input = false;
+    while let Some(arg) = args.next() {
+        match arg {
+            "--no-session-persistence" => stateless = true,
+            "--input-format" => streaming_input = args.next() == Some("stream-json"),
+            "--input-format=stream-json" => streaming_input = true,
+            _ => {}
+        }
+    }
+    stateless && streaming_input
 }
 
 #[cfg(windows)]
@@ -322,6 +361,41 @@ pub(super) fn command_basename(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excludes_stateless_sdk_workers_but_keeps_user_clients() {
+        let mut process = ProcessSnapshot {
+            process_id: 1,
+            name: "claude.exe".into(),
+            executable_path: Some(r"C:\Users\test\.local\bin\claude.exe".into()),
+            command_line: None,
+            creation_date_ms: None,
+        };
+        for command in [
+            "claude.exe --output-format stream-json --verbose --input-format stream-json --model sonnet --permission-prompt-tool stdio --permission-mode dontAsk --no-session-persistence",
+            r#""C:\Users\Test User\.local\bin\claude.exe" --no-session-persistence --input-format "stream-json""#,
+            "/usr/local/bin/claude --no-session-persistence --input-format=stream-json",
+        ] {
+            process.command_line = Some(command.into());
+            assert!(!is_code_process(&process), "{command}");
+            assert!(!is_desktop_process(&process), "{command}");
+        }
+        for command in [
+            "claude.exe --resume",
+            "claude.exe --input-format stream-json",
+            "claude.exe -p --no-session-persistence explain",
+            r#"claude.exe -p "Explain --input-format stream-json --no-session-persistence""#,
+            r#"claude.exe -p "Explain \"flags\" --no-session-persistence" --input-format stream-json"#,
+            "claude.exe -- --input-format stream-json --no-session-persistence",
+        ] {
+            process.command_line = Some(command.into());
+            assert!(is_code_process(&process), "{command}");
+        }
+        process.executable_path = Some(r"C:\Program Files\Claude\Claude.exe".into());
+        process.command_line = Some(r#""C:\Program Files\Claude\Claude.exe""#.into());
+        assert!(is_desktop_process(&process));
+        assert!(!is_code_process(&process));
+    }
 
     #[test]
     fn excludes_chrome_host_but_keeps_code_sessions() {

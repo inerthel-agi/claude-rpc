@@ -1,6 +1,6 @@
 {
   "name": "claude-rpc",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "description": "Claude RPC",
   "scripts": {
     "start": "tauri dev",
@@ -19,7 +19,7 @@
     "claude",
     "anthropic"
   ],
-  "author": "Inerthel",
+  "author": "inerthel-agi",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {

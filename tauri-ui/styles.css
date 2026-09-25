@@ -6,7 +6,6 @@
   /* Anthropic Dark Palette */
   --bg: #141413;
   --surface: #1d1d1b;
-  --panel: #1a1a19;
   --input: #141413;
   --input-focus: #111110;
   --line: #2a2a28;
@@ -21,12 +20,9 @@
   --button-hover: #2b2b2a;
   --status-bg: #191918;
   --focus: rgba(224, 131, 100, 0.3);
-  --glass-border: var(--line);
-  --inset: none;
 
   /* Easing curves */
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 body[data-theme="light"] {
@@ -35,7 +31,6 @@ body[data-theme="light"] {
   /* Anthropic Light Palette */
   --bg: #faf9f5;
   --surface: #ffffff;
-  --panel: #faf9f5;
   --input: #fcfbf9;
   --input-focus: #ffffff;
   --line: #e8e6dc;
@@ -50,8 +45,6 @@ body[data-theme="light"] {
   --button-hover: #eae6dc;
   --status-bg: #f0eee4;
   --focus: rgba(217, 119, 87, 0.25);
-  --glass-border: var(--line);
-  --inset: none;
 }
 
 * {
@@ -88,6 +81,30 @@ select {
   background: var(--bg);
   max-width: 640px;
   margin: 0 auto;
+}
+
+/* Thin themed scrollbar instead of the native grey bar with arrow buttons. */
+.shell::-webkit-scrollbar {
+  width: 10px;
+}
+
+.shell::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+}
+
+.shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.shell::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--bg);
+  border-radius: 99px;
+}
+
+.shell::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
 .topbar {
@@ -456,6 +473,12 @@ button:disabled {
   gap: 8px;
 }
 
+.limit-chips {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+}
+
 /* Master Shown/Hidden keeps the switch graphic; reserve room for label + switch
    so the knob can't ride over the text. */
 .limit-controls #limits-toggle {
@@ -468,12 +491,13 @@ button:disabled {
    switches: drop the switch pseudo-elements (the source of the overlap) and size
    each chip to its label. Active state is shown via the .toggle.active fill. */
 .limit-controls .compact {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   width: auto;
+  min-width: 0;
   justify-content: center;
   text-align: center;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .limit-controls .compact::after,
@@ -481,9 +505,23 @@ button:disabled {
   content: none;
 }
 
-.limit-controls #refresh-limits {
+/* Help line doubles as the Refresh row so the button no longer wraps onto its
+   own line under the chips. */
+.mode-grid .limit-help {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: none;
+}
+
+.limit-help #refresh-limits {
   flex: 0 0 auto;
-  margin-left: auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--accent);
 }
 
 /* RPC Preview panel */

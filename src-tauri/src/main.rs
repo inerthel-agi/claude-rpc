@@ -62,7 +62,6 @@ const MACOS_LAUNCH_AGENT_LABEL: &str = "eu.stealthylabs.claude-rpc";
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClaudeStatus {
-    summary: String,
     claude_line: String,
     model_line: String,
     limits_line: Option<String>,
@@ -72,8 +71,6 @@ struct ClaudeStatus {
     preview_primary: Option<String>,
     preview_secondary: Option<String>,
     preview_tertiary: Option<String>,
-    daemon_running: bool,
-    daemon_pid: Option<u32>,
     daemon_error: Option<String>,
 }
 
@@ -106,11 +103,6 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
     let daemon = read_daemon_status(&state);
 
     Ok(ClaudeStatus {
-        summary: value
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("Claude RPC")
-            .to_string(),
         claude_line: value
             .get("claudeLine")
             .and_then(Value::as_str)
@@ -151,8 +143,6 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
             .get("previewTertiary")
             .and_then(Value::as_str)
             .map(str::to_string),
-        daemon_running: daemon.running,
-        daemon_pid: daemon.pid,
         daemon_error: daemon.error,
     })
 }
@@ -163,11 +153,6 @@ fn start_daemon(
     state: tauri::State<'_, DaemonState>,
 ) -> Result<DaemonStatus, String> {
     start_daemon_inner(&app, &state);
-    Ok(read_daemon_status(&state))
-}
-
-#[tauri::command]
-fn daemon_status(state: tauri::State<'_, DaemonState>) -> Result<DaemonStatus, String> {
     Ok(read_daemon_status(&state))
 }
 
@@ -348,7 +333,6 @@ fn main() {
             save_config,
             load_status,
             start_daemon,
-            daemon_status,
             close_settings,
             refresh_limits,
             check_update,

@@ -89,8 +89,6 @@ struct DetectionResult {
     model: Option<String>,
     limits_line: Option<String>,
     provider: String,
-    project_name: Option<String>,
-    session_title: Option<String>,
     code_instances: usize,
     started_at_ms: Option<u64>,
 }
@@ -104,8 +102,6 @@ impl Default for DetectionResult {
             model: None,
             limits_line: None,
             provider: "Unknown".into(),
-            project_name: None,
-            session_title: None,
             code_instances: 0,
             started_at_ms: None,
         }
@@ -127,8 +123,6 @@ struct DesktopInfo {
 struct SessionInfo {
     file: PathBuf,
     started_at_ms: Option<u64>,
-    project_name: Option<String>,
-    session_title: Option<String>,
     model: Option<String>,
     cwd: Option<String>,
 }
@@ -342,12 +336,6 @@ fn detect(
         },
         limits_line,
         provider: detect_provider(),
-        project_name: session
-            .as_ref()
-            .and_then(|session| session.project_name.clone()),
-        session_title: session
-            .as_ref()
-            .and_then(|session| session.session_title.clone()),
         code_instances: code_count,
         started_at_ms: oldest
             .or_else(|| session.as_ref().and_then(|session| session.started_at_ms)),
