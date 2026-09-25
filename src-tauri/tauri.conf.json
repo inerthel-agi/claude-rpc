@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Claude RPC",
+  "version": "3.8.0",
+  "identifier": "eu.stealthylabs.claude-rpc",
+  "mainBinaryName": "claude-rpc",
+  "build": {
+    "frontendDist": "../tauri-ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "inerthel-agi",
+    "icon": ["../logo/clawd.ico"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/inerthel-agi/claude-rpc/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI5Q0ZBQ0EzN0U4RkYxNUIKUldSYjhZOStvNnpQdWNFUEliVWtVYWpnbE1TRWZEOCszUXgvUGtxbW9zUXdIVFUyaVdlTnpPcm4K"
+    }
+  }
+}

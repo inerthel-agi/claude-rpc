@@ -1,0 +1,32 @@
+{
+  "name": "claude-rpc",
+  "version": "3.8.0",
+  "description": "Claude RPC",
+  "scripts": {
+    "start": "tauri dev",
+    "build": "node scripts/build-tauri.js",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "node scripts/build-tauri.js",
+    "tauri:build:macos": "node scripts/build-tauri-macos.js",
+    "tauri:build:windows": "tauri build --bundles nsis && node scripts/export-tauri-binary.js",
+    "test": "node scripts/cargo-test.js"
+  },
+  "keywords": [
+    "discord",
+    "rpc",
+    "rich-presence",
+    "claude",
+    "anthropic"
+  ],
+  "author": "inerthel-agi",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1"
+  },
+  "files": [
+    "logo/",
+    "README.md"
+  ]
+}

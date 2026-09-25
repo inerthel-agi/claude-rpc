@@ -1,0 +1,353 @@
+# Changelog
+
+## v3.8.0 (2026-09-25)
+
+### Added
+- **Weekly Fable limit**: the weekly usage limit scoped to Claude Fable is now read from the usage endpoint and can be shown in Discord RPC. A new `Fable` chip in Settings → Limits toggles it (`showLimitFable` in `config.json`, on by default).
+- Claude Desktop's Code tab: the 5-hour usage shown on the composer's usage button is now read directly, so the 5h limit stays available without opening the usage popover.
+
+### Changed
+- **Provider labels**: `Amazon Bedrock` is now `AWS Bedrock`, `Google GCP Vertex` is now `Google Vertex`, `Microsoft Foundry` is now `Microsoft Azure`, and `Claude Account` is now `Subscription`.
+- **Provider detection precedence** follows Claude Code: an `apiKeyHelper` wins over a login, and an active subscription login wins over an API key left on disk by an earlier Console login. A `CLAUDE_CODE_OAUTH_TOKEN` environment variable is reported as `Subscription`.
+- The limits line no longer shows a bucket count: `Limits: 5h 3%` instead of `Limits (1): 5h 3%`.
+- Settings → Limits is laid out as a row of chips with a short help line, and the settings window uses a themed scrollbar.
+
+### Removed
+- **Idle presence**: the option to keep a Discord presence while no Claude client runs is gone. The presence now always clears when neither Claude Code nor Claude Desktop is running. The `showIdle` setting is ignored.
+- **Session title and project name**: Claude Code's details line no longer appends the session title or the project folder name. The `showSessionTitle` setting and its toggle are removed.
+- Unused internal code: the `daemon_status` command, the `version` and `summary` keys of `status.txt`, unused status fields, unused CSS variables and the `scripts/export-tauri-exe.js` alias.
+
+### Fixed
+- **Desktop model and effort detection**: in Claude Desktop's Code tab, the `Model: …` and `Effort: …` picker buttons now take precedence over free text on screen (chat messages, usage popover labels), which previously caused the wrong model or no model to be detected.
+- An open Claude Desktop Code session is now recognized as Code mode even when the home-screen markers are no longer visible.
+- The weekly limit no longer disappears when the Desktop usage popover is closed: usage-endpoint values and on-screen values are merged instead of one replacing the other.
+- Per-model weekly buckets shown in the Desktop usage popover are no longer mislabelled as the all-models weekly limit.
+- A subscription OAuth token (`sk-ant-oat…`) is no longer mistaken for an Anthropic API key.
+- Background Claude Code SDK workers started without a user session (for example by plugins, detected by `--no-session-persistence` with `--input-format stream-json`) no longer count as an active Claude Code session.
+
+## v3.7.0 (2026-09-23)
+
+### Added
+- Claude Fable 5.1, Opus 5.5, Sonnet 5, and Haiku 4.5 model IDs and display names are recognized across CLI and Desktop detection.
+- macOS Code detection recognizes bare `fable-` model tokens.
+
+### Changed
+- Model version parsing ignores snapshot dates; bare family names now resolve to Fable 5.1, Opus 5.5, Sonnet 5, or Haiku 4.5. The `opusplan` label no longer embeds a version.
+- Removed cost and token accounting, debug output, the Sonnet-only limit, and decorative shadows from settings and the tray.
+- Updated vulnerable Rust dependencies and the updater signing key. Existing installations require one manual installation of v3.7.0 to trust the new key; automatic updates resume afterwards.
+
+### Fixed
+- The Chrome native host no longer appears as an active Claude Code session. Discord presence clears when neither Claude Code nor Claude Desktop is running, even if a recent session log remains.
+
+## v3.6.0 (2026-07-07)
+
+### Changed
+- **Internal restructure**: the daemon is now split into focused modules — `daemon/ipc.rs` (Discord IPC transport), `daemon/usage.rs` (costs, usage limits, OAuth) and `daemon/mod.rs` (detection/presence) — instead of a single 4,300-line file. No behavior change.
+- **Single shared config model**: `ClaudeConfig` now lives in one shared `config.rs` used by both the tray app and the daemon, eliminating the duplicated-struct drift that previously caused saved settings to be silently wiped (the `show_idle` bug class).
+- **Zero-warning policy**: the codebase is clippy-clean (macOS-only helpers are properly `#[cfg]`-gated, dead cross-platform stubs removed) and CI now enforces `cargo fmt --check` and `cargo clippy -D warnings` so warnings can't accumulate again.
+
+### Fixed
+- Stale UI comment still referencing the removed `Design` usage-limit filter.
+
+
+## v3.5.0 (2026-06-20)
+
+### Added
+- **Usage cost panel**: a new Settings → Usage cost section breaks spend down per model family (Opus / Sonnet / Haiku / Fable) for the current session and across all projects, with token counts and the input/output split. The current session is computed live from the session log (cache-aware); the all-projects figures use Claude's own per-model accounting, with the active project's live session counted once (it replaces, not adds to, that project's stored last session). Optional Discord RPC labels expose per-model cost, the all-projects `$` total, current-project tokens, and the all-projects token total (the `Cost` / `Total` / `Proj tokens` / `All tokens` toggles in Settings → Mode, mutually exclusive per scope).
+- **Custom window title bar**: the native Windows title bar is replaced by a minimal frameless bar — app logo on the left, window controls (minimize / maximize / close) on the right. The whole bar drags the window, double-click toggles maximize, and Close hides to the tray (same as the footer Close and the old window `X` — it never kills the daemon).
+
+## v3.4.0 (2026-06-19)
+
+### Added
+- **Single instance**: a second launch (autostart + manual, double-click, installer post-run) no longer starts a second tray/daemon — it focuses/opens the existing settings window. Prevents two daemons fighting over the Discord presence. (`tauri-plugin-single-instance`.)
+- **`Ultracode` effort tier**: when `/effort ultracode` is active, the RPC now shows `Ultracode`. The tier leaves `settings.json` `effortLevel` at `xhigh` (it is xhigh + workflow orchestration), so the real signal is the `/effort` "this session only" override recorded in the session log; it is parsed (and cached per session) and takes precedence over `effortLevel`.
+- **Claude Fable 5 model**: `claude-fable-5` (including the Bedrock/Vertex IDs and the `[1m]` variant) now displays as `Claude Fable 5`. Mythos is intentionally not surfaced (invitation-only).
+- **`Refresh limits`** button now forces an immediate OAuth usage re-fetch (it previously only opened the usage page).
+
+### Changed
+- **Usage percentages stay fresh**: any live Claude client now polls the OAuth usage endpoint every 60s instead of the 10-minute idle floor, and `Refresh limits` bypasses the poll interval/backoff.
+- **Per-bucket usage freshness**: each limit bucket now carries its own timestamp and expires individually after 1h (kept below the 5h window) instead of a single 6h global cache — a stale bucket can no longer outlive its own reset, and a partial OAuth response no longer re-marks absent buckets as fresh.
+- **Preview parity**: the Settings preview (header, body lines, buttons, and the limits tooltip) is now driven entirely by the daemon's real layout, removing the transient split-brain when switching RPC mode.
+- **Settings → Limits row** redesigned: the `5h` / `All` / `Sonnet only` filters are now chips (the switch knob no longer overlaps the labels) laid out with flex-wrap.
+- **Settings visual refresh**: premium dark desktop styling across the window (typography, spacing, controls, theme switch).
+
+### Fixed
+- **Idle presence now persists**: `main.rs`'s config struct was missing `show_idle`, so the toggle was silently wiped on every save and never took effect.
+- **Windows Discord IPC hang**: if Discord accepted a presence write but never replied (half-open pipe), the single daemon thread — and app Quit — could block forever. Reads now time out (`PeekNamedPipe` poll on Windows, socket read/write timeouts on Unix) and the loop reconnects.
+- A presence push whose acknowledgement never arrived was treated as successful; it now reconnects instead of caching a possibly-stale presence.
+- Config reload no longer reads the file mtime twice (TOCTOU), so the cached stamp always matches the content actually loaded.
+- UI-scraped usage percentages over 100% are clamped to 100 instead of being dropped (which previously skewed the `Limits (N)` count).
+
+### Removed
+- **`Design` usage-limit category** removed end-to-end — the Settings chip, config flag, OAuth/UI parsing, and display.
+- Dead `webhook_url` config field removed from both config structs (it was never read and had no UI; existing config files still load).
+
+## v3.3.1 (2026-05-14)
+
+### Added
+- **Idle presence**: new toggle in Settings → Mode — when enabled, Claude appears in Discord RPC even when no Claude Code or Claude Desktop is running. Displays usage limits if the Limits toggle is on.
+
+### Changed
+- Settings UI: "Idle presence" toggle added below DND in the Mode section.
+
+## v3.3.0 (2026-05-14)
+
+### Added
+- Built-in auto-updater via `tauri-plugin-updater`: checks the latest signed GitHub release on startup, notifies in the settings window (banner) and tray menu, downloads and installs in place. Release workflow now signs the NSIS installer and publishes `latest.json`.
+- Optional `Session title` visibility toggle — controls whether the Claude Code session title (or project-name fallback) is appended to the Discord RPC details.
+- Resilient Claude Code model detection: the last detected model is cached per session so it survives the 256 KB tail-read window being filled by large attachments, with a `~/.claude.json` `lastModelUsage` fallback for fresh sessions before the first reply.
+
+### Changed
+- Discord RPC identity renamed to `Clawd` (activity name) with the Clawd mascot as the large image.
+- App, system tray, and window icons switched to the transparent Clawd mascot (`logo/clawd.ico`); the settings window header uses the Clawd mascot.
+- Settings preview now mirrors Discord's per-activity-type card layout exactly — the daemon computes the real header/primary/secondary/tertiary lines instead of the UI reconstructing them.
+- Settings window reworked: smaller default size, `RPC` labels renamed to `IPC`, collapsed-section summaries, removed the Logo (URL/asset) option, footer rebalanced.
+- README: banner image, updated feature list and versions.
+
+### Fixed
+- OAuth usage limit parsing: `utilization` is a 0..100 percentage and is no longer mistaken for a 0..1 ratio (e.g. `seven_day: 1.0` now shows `1%` instead of `100%`).
+- When `Session title` is disabled, the project-name fallback (`- repo`) is no longer appended either.
+
+### Security
+- OAuth usage response dump (`oauth-usage-debug.json`) is now gated behind the `verbose` flag instead of being written on every poll.
+- Discord IPC `read_frame` ping loop is bounded so a process squatting the `discord-ipc-*` pipe cannot keep the daemon thread spinning.
+
+### Build
+- `tauri.conf.json` gains `createUpdaterArtifacts` and the `updater` plugin config (endpoint + public key). Signing keys are supplied to CI via the `TAURI_SIGNING_PRIVATE_KEY` secret.
+
+## v3.2.1 (2026-05-08)
+
+### Fixed
+- Fixed `5h 255%` saturation in OAuth usage parsing — `utilization` is returned as a percentage (e.g. `20.0`) not a 0..1 ratio. Parser now auto-detects scale.
+- Fixed missing `Sonnet only` and `Design` limit categories — corrected OAuth bucket keys to `seven_day_sonnet` and `seven_day_omelette` (verified from live API response).
+
+### Added
+- Near-real-time usage refresh: when the active session JSONL is modified (i.e. a prompt completes), an OAuth fetch is scheduled with a 60s minimum interval (down from the 10 min idle cadence). Backoff on HTTP 429 reduced to 5 min.
+- OAuth response is dumped to `~/.claude-rpc/oauth-usage-debug.json` for debugging.
+
+## v3.2.0 (2026-05-08)
+
+### Added
+- AI session title in Discord RPC details for Claude Code (reads `ai-title` entry from session JSONL — e.g. `Claude Code - Build Claude RPC app with diagnostics`).
+- Automatic Claude Pro/Max usage limits fetch via OAuth `https://api.anthropic.com/api/oauth/usage` endpoint — 5h and 7-day percentages now populate without needing Claude Desktop's Usage page open. Polls every 10 min with 30 min backoff on HTTP 429.
+
+### Fixed
+- Eliminated 1-second white window flash on app launch by creating the Settings webview lazily on first tray click instead of at startup.
+- Eliminated console window flash when toggling "Start on Windows" or opening the tray menu — `reg.exe` calls now use `CREATE_NO_WINDOW` flag.
+- Fixed false-positive Claude Sonnet 4.5 detection during idle — `read_session_tail` now skips `isSidechain: true` entries (Task subagent calls) and only considers `assistant`-type entries from the main thread.
+- Fixed brief Sonnet 4.5 flash caused by background Claude SDK observers (e.g. `claude-mem-observer-sessions`) becoming the most-recently-modified JSONL — `find_latest_jsonl_file` now rejects sessions whose `cwd` traverses a hidden directory (`.claude-mem`, etc.).
+
+### Build
+- Quoted `process.execPath` in `scripts/build-tauri.js` to fix `'C:\Program' is not recognized` when Node lives under `C:\Program Files\nodejs`.
+
+## v3.1.1 (2026-04-27)
+
+### Added
+- Added macOS Tauri build output with `.app`, `.dmg`, and portable arm64 binary artifacts.
+- Added macOS Claude Code and Claude Desktop process detection.
+- Added macOS Discord RPC IPC support through Unix `discord-ipc-*` sockets.
+- Added macOS start-at-login support through a LaunchAgent.
+- Added Claude account provider detection from `~/.claude.json` `oauthAccount`.
+- Added macOS Claude Desktop model fallbacks for Chat, Cowork, and Code modes.
+- Added macOS Claude Desktop Code effort detection from `ccd-effort-level`.
+
+### Changed
+- Build scripts now export platform-specific Tauri binaries and validate the signed macOS app bundle.
+- `Refresh` opens Claude Usage with the native platform URL opener.
+- Claude Code model detection now prioritizes the active session tail, including `/model` command output, before settings fallback.
+- Default detection polling is now 250 ms so Desktop model/effort switches reach Discord faster.
+
+### Fixed
+- Fixed Claude Code showing `Unknown` after `/model default` when the active JSONL session contains the model label.
+- Fixed provider showing `Unknown` for Claude Code account login on macOS.
+- Fixed Claude Desktop on macOS falling back to plain `Claude` instead of the selected model.
+- Fixed Claude Desktop `Code` mode on macOS being misclassified as `Cowork`.
+- Fixed Claude Desktop `Cowork` mode on macOS being missed when Claude stores it as `task`.
+- Fixed Claude Desktop `Cowork` model detection on macOS by reading `sticky-model-*` local storage entries.
+- Fixed Claude Desktop `Cowork` model detection preferring stale local agent sessions over the active local storage model.
+- Fixed Claude Desktop `Code` effort on macOS using CLI settings instead of the active Desktop effort value.
+- Fixed Claude Desktop `Code` model detection on macOS preferring stale Claude Code session JSONL over the active Desktop model selector.
+- Fixed macOS model detection reading stale LevelDB manifest entries before active `.ldb` / `.log` data files.
+- Added macOS parsing for readable `Adaptive` and `Extended` model markers when Claude Desktop exposes them in local storage labels.
+
+## v3.1.0 (2026-04-27)
+
+### Added
+- Added a tray menu toggle to start Claude RPC with Windows.
+
+## v3.0.1 (2026-04-26)
+
+### Changed
+- Improved settings layout spacing, alignment, and window height.
+- Added collapsible settings sections.
+- Restored vertical scrolling only when expanded content overflows.
+- Fixed dark theme dropdown option readability.
+
+## v3.0.0 (2026-04-26)
+
+### Added
+- Native Tauri/Rust settings window and system tray.
+- In-process Rust Discord IPC, process detection, status writing, and presence updates.
+- Discord RPC modes: Playing, Watching, Listening, and Competing.
+- Optional Discord buttons in Watching mode.
+- DND toggle that clears Discord activity while Claude detection keeps running.
+- Dark/System/Light settings themes.
+- Claude Desktop UI Automation detection for mode, submode, model, effort, and usage limits.
+- Usage limit controls for 5h, All, Sonnet only, and Design values.
+- Cached usage limit values so RPC can keep showing percentages away from the Usage page.
+- Refresh button to open Claude Usage and update cached limits.
+- Optional RPC visibility toggles for provider and effort labels.
+- Preview card that mirrors current RPC configuration.
+
+### Changed
+- Refactored Claude RPC to a native Tauri/Rust daemon.
+- Removed the Node.js/Python/PyInstaller runtime path from the main build.
+- Discord IPC, process detection, status writing, tray settings, and presence updates now run in-process.
+- Build output is a single lightweight `bin/claude-rpc.exe`.
+- Task Manager now groups settings and daemon under the same Tauri app process tree.
+- Settings window resized for the expanded controls.
+
+### Removed
+- Bundled `node.exe`, `node_modules`, PyInstaller sidecar, PowerShell tray, and legacy JS daemon entry points.
+- Legacy Python/Node entry points and build scripts.
+
+## v2.4.0 (2026-04-18)
+
+### Removed
+- **Away / Idle / inactive states** — no more "Away" or "Idle" in Discord presence. While a Claude session (CLI or Desktop) is running, the presence reflects the live state; when no session is running, the presence is **cleared** instead of showing an Idle placeholder.
+- `idleTimeoutMinutes` config key and `--no-idle` CLI flag (removed: always disabled now).
+- PowerShell watcher `GetLastInputInfo` plumbing (`inputAgoMs` field). Watcher bumped to v23 without it.
+
+## v2.3.5 (2026-04-18)
+
+### Changed
+- **Activity type**: `Watching Claude AI` → `Playing Claude AI` (Discord RPC `type: 3` → `type: 0`)
+- **Idle detection** now driven by system keyboard/mouse activity via Win32 `GetLastInputInfo`. Typing anywhere (including inside the Claude Code CLI input box) keeps the presence active; "Away" only fires after `idleTimeoutMinutes` of zero user input.
+
+### Added
+- PowerShell watcher emits `inputAgoMs` field (system idle time in ms) — v22 watcher
+- 15s startup grace window so the presence never flashes "Away" during watcher warm-up
+- Event-driven presence refresh — first input observation fires an immediate update instead of waiting for the next 1s poll
+
+## v2.3.4 (2026-04-18)
+
+### Added
+- **Claude Desktop Dispatch submode** detection via UI Automation scoring (e.g. `Cowork - Dispatch`)
+- **Adaptive / Extended thinking** detection via `TogglePattern` — checks element, parent, and children so toggle state isn't inferred from label presence alone
+- **Effort level** display (Low / Medium / High / Extra high / Max) for both:
+  - Claude Desktop (parsed from UI button labels, e.g. `Sonnet 4.6 · High`)
+  - Claude Code CLI (read from `~/.claude/settings.json` `effortLevel` field)
+- **Provider expansion** — `detectProvider()` now also reads `~/.claude/settings.json` `env` block, supporting:
+  - Anthropic API
+  - Claude Account
+  - Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK`)
+  - Google GCP Vertex (`CLAUDE_CODE_USE_VERTEX`)
+  - Microsoft Foundry (`CLAUDE_CODE_USE_FOUNDRY`)
+
+### Changed
+- **Tray menu redesign** (Codex-style layout):
+  ```
+  Claude Rich Presence
+  Claude: Off / CLI (Code) / Desktop (Chat | Cowork | Cowork - Dispatch | Code)
+  Claude Sonnet 4.6 · Extra high
+  Provider: Anthropic API
+  Discord: Connected
+  ```
+- Model line no longer carries `Model:` prefix (matches Codex Rich Presence style)
+- Faster refresh intervals for Discord Rich Presence updates
+
+### Fixed
+- **`cachedModel` bakes in effort suffix** — effort is now re-read each tick, so `/effort medium` updates Discord within seconds without needing a session/model restart
+- **PowerShell regex middle dot (`·`)** — `\u00b7` escape fixes effort extraction under Windows-1252 decode
+- **`Sort-Object` on hashtables** — now uses a script block `{ $_.Score }`; sorting by property name silently ignored hashtable keys and broke mode scoring
+- **Adaptive/Extended leaks between modes** — `watcherState` now resets `adaptive`/`extended` when mode or model changes
+
+### Build
+- `requirements.txt` bumped for Python 3.14: `pyinstaller>=6.15.0`, `Pillow>=11.0.0`
+- `build.bat` uses `call` prefix for `.cmd` shims (npm, pip, pyinstaller) so the outer batch doesn't exit early
+
+## v2.3.0 (2026-04-07)
+
+### Added
+- **All-in-one exe** — single `claude-rpc.exe` (~47 MB) embeds node.exe, JS runtime, node_modules, and logo assets. No external folders needed — double-click and go.
+- **`scripts/build-dist.js`** — local build script matching the release CI pipeline
+- **`launcher.js`** — experimental pure Node.js launcher with single-instance lock (Windows named pipe), not used in default build
+- **`logo/tray-icon.b64`** — base64-encoded PNG tray icon source file
+- **`sea-config.json`** + `build:sea` npm script — experimental Node.js Single Executable Application support
+
+### Fixed
+- **Zero console window** — PyInstaller `--windowed` (GUI subsystem) + `node.exe` with `CREATE_NO_WINDOW` ensures no CMD/PowerShell flash on launch
+- **Tray process leak** — SIGINT/SIGTERM now explicitly kill the PowerShell tray before exit
+
+### Changed
+- **Release artifact** — single exe replaces the previous zip archive (exe + runtime/ + logo/)
+- Tray icon loaded from `logo/tray-icon.b64` at runtime instead of inline base64 constant
+- `.gitignore` now excludes `.claude/` local settings directory
+
+## v2.2.1 (2026-04-06)
+
+### Security
+- **Pin Python deps to exact versions** - `requirements.txt` switched from `>=` to `==` for all 5 deps (`pystray`, `Pillow`, `python-dotenv`, `watchdog`, `uiautomation`), eliminating the supply-chain risk of unpinned PyPI resolution at release build time
+
+### Removed
+- `psutil` and `keyring` from `requirements.txt` - orphaned by removal of `presence.py` and `secure_env.py`
+
+### Fixed
+- `version_info.txt` version corrected to `2.2.0.0` (was incorrectly set to `2.1.0.0`)
+
+## v2.2.0 (2026-04-04)
+
+### Added
+- **Config file** (`~/.claude-rpc/config.json`) for persistent preferences (idle timeout, DND, logo mode, webhook, verbose)
+- **CLI flags**: `--version`, `--help`, `--verbose`, `--dnd`, `--no-idle`
+- **Do Not Disturb mode** via config or `--dnd` flag - hides Discord presence
+- **File-based logging** at `~/.claude-rpc/rpc.log` with automatic 1 MB rotation
+- **Linux support** in watcher script (Claude Code detection via pgrep)
+- **Multi-instance display** - shows instance count when multiple Claude Code sessions are running
+- **Discord webhook notifications** (optional) on session start/end/away events
+- **System tray for Node.js** (`tray.js`) - Windows NotifyIcon with DND toggle, Start on Boot, Quit
+- **Automated CI/CD** - GitHub Actions for testing (Node 18/20/22) and release builds
+- **Test suite** - 20 tests covering formatModelName, compareVersions, sanitizeString, config
+- **Status file** (`~/.claude-rpc/status.txt`) for tray communication
+
+### Fixed
+- **LOGO_URL** pointed to old repo name `anthropic-rich-presence` instead of `claude-rpc`
+- **findLatestJsonlFile()** now scans recursively (depth-limited to 3, excludes node_modules/.git/.venv)
+- **Provider cache** now expires after 5 minutes instead of being permanent
+- **DND mode** was referencing `global.dndMode` which was never set (dead code)
+- **Idle timeout** now configurable via config file (was hardcoded to env var only)
+- **.env loading** now checks `__dirname` first, fixing "DISCORD_CLIENT_ID missing" errors
+- **Duplicate `atexit` import** in main.py
+- **Build script** now installs production-only dependencies (`--omit=dev`), saving ~50 MB
+
+### Removed
+- `presence.py` (737 lines) - legacy RPC logic fully replaced by index.js
+- `discord_ipc.py` (152 lines) - replaced by @xhayper/discord-rpc
+- `secure_env.py` (77 lines) - replaced by secure-env.js
+- `anthropic-rich-presence.spec` - legacy PyInstaller spec
+
+### Changed
+- `index.js` refactored to export `start()` function (importable by tray.js without side effects)
+- `package.json` updated: main points to index.js, added vitest, keywords, engines, files field
+- `.gitignore` cleaned up: added .venv, *.log, IDE dirs
+- Watcher script bumped to v11 with Linux support
+- Release workflow now builds `claude-rpc.exe` via PyInstaller + bundles Node.js runtime
+
+## v2.1.0 (2026-03-31)
+
+### Added
+- Display "Opus Plan / Sonnet 4.6" in Discord RPC for Opus Plan Mode
+
+## v2.0.0 (2026-03-20)
+
+### Added
+- Initial release
+- Auto-detect Claude Code and Claude Desktop
+- Live model tracking (Opus, Sonnet, Haiku)
+- Extended thinking detection
+- 1M context badge for supported models
+- Session elapsed time from JSONL timestamps
+- Idle timeout (15 minutes)
+- Windows system tray with Start on Boot
+- Zero-config Discord Application ID
+- DPAPI/Keychain credential encryption
