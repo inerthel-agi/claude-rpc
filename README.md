@@ -12,7 +12,7 @@ Claude RPC shows your Claude Code and Claude Desktop activity as a Discord Rich 
 
 To build from source:
 
-- Rust 1.88.0 (the version used by CI and releases).
+- Rust 1.89.0 (the version used by CI and releases).
 - Node.js 22 and npm.
 - Visual Studio Build Tools with the C++ workload.
 
