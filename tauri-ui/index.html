@@ -3,11 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claude RPC Settings</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <title>Claude RPC</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./shared.js"></script>
     <script defer src="./main.js"></script>
   </head>
   <body>
@@ -27,131 +25,178 @@
     </div>
     <main class="shell">
       <header class="topbar">
-        <div class="title-row">
-          <div class="brand">
-            <img class="app-icon" src="./clawd.webp" alt="" />
-            <h1>Claude RPC Settings</h1>
-          </div>
-          <div class="theme-switch" aria-label="Theme">
-            <button type="button" data-theme-option="dark">Dark</button>
-            <button type="button" data-theme-option="system">System</button>
-            <button type="button" data-theme-option="light">Light</button>
-          </div>
+        <img class="app-icon" src="./clawd.webp" alt="" />
+        <h1>Claude RPC</h1>
+        <div class="theme-switch" aria-label="Theme">
+          <button type="button" data-theme-option="dark" data-i18n="theme.dark">Dark</button>
+          <button type="button" data-theme-option="system" data-i18n="theme.system">System</button>
+          <button type="button" data-theme-option="light" data-i18n="theme.light">Light</button>
         </div>
-        <p id="status" class="status">Claude: Off</p>
       </header>
 
-      <div id="update-banner" class="update-banner" hidden>
-        <span id="update-text"></span>
-        <button type="button" id="update-now" class="primary">Update now</button>
+      <div class="tiles" aria-live="polite">
+        <div class="tile"><small data-i18n="tile.claude">Claude</small><div id="tile-claude">Not running</div></div>
+        <div class="tile"><small data-i18n="tile.model">Model</small><div id="tile-model">—</div></div>
+        <div class="tile"><small data-i18n="tile.plan">Plan</small><div id="tile-plan">—</div></div>
+        <div class="tile"><small data-i18n="tile.discord">Discord</small><div><span class="dot" id="tile-discord-dot"></span><span id="tile-discord">Not connected</span></div></div>
       </div>
 
-      <section class="panel" data-section="buttons">
-        <button type="button" class="legend section-toggle" aria-expanded="true">
-          <span class="legend-label">Buttons</span>
-          <span class="legend-summary"></span>
-        </button>
-        <div class="panel-content">
-          <div class="panel-inner">
-            <div class="grid head">
-              <span>Slot</span>
-              <span>Label</span>
-              <span>URL</span>
-            </div>
-            <div class="grid">
-              <label>Button 1</label>
-              <input id="label0" maxlength="32" spellcheck="false" />
-              <input id="url0" spellcheck="false" />
-            </div>
-            <div class="grid">
-              <label>Button 2</label>
-              <input id="label1" maxlength="32" spellcheck="false" />
-              <input id="url1" spellcheck="false" />
-            </div>
+      <div id="update-banner" class="update-banner" hidden>
+        <div class="banner-copy">
+          <span id="update-text"></span>
+          <p id="update-notes" class="notes" hidden></p>
+        </div>
+        <button type="button" id="update-now" class="primary" data-i18n="update.now">Update now</button>
+      </div>
+
+      <div id="whats-new" class="update-banner whats-new" hidden>
+        <div class="banner-copy">
+          <strong id="whats-new-title"></strong>
+          <p id="whats-new-notes" class="notes"></p>
+        </div>
+        <button type="button" id="whats-new-dismiss" data-i18n="whatsnew.dismiss">Got it</button>
+      </div>
+
+      <section class="preview">
+        <div class="preview-top">
+          <span id="preview-activity" class="eyebrow">Playing</span>
+          <span class="hint" data-i18n="preview.hint">What others see on your profile</span>
+        </div>
+        <div class="activity">
+          <div class="art"><img src="./clawd.webp" alt="" /></div>
+          <div class="preview-copy">
+            <strong id="preview-primary">Claude AI</strong>
+            <span id="preview-secondary"></span>
+            <span id="preview-tertiary"></span>
+            <div id="preview-buttons" class="preview-buttons"></div>
           </div>
         </div>
       </section>
 
-      <section class="panel mode-panel" data-section="mode">
-        <button type="button" class="legend section-toggle" aria-expanded="true">
-          <span class="legend-label">Mode</span>
-          <span class="legend-summary"></span>
-        </button>
-        <div class="panel-content">
-          <div class="panel-inner mode-grid">
-            <label for="rpc-mode">IPC mode</label>
-            <select id="rpc-mode">
-              <option value="playing">Playing</option>
-              <option value="watching">Watching (TV)</option>
-              <option value="listening">Listening</option>
-              <option value="competing">Competing</option>
-            </select>
-            <p>Buttons are sent only in Watching mode.</p>
-            <label>DND</label>
-            <button type="button" id="dnd-toggle" class="toggle" aria-pressed="false">DND off</button>
-            <p>Clears Discord activity while Claude detection keeps running.</p>
-            <label>IPC info</label>
-            <div class="rpc-info-controls">
-              <button type="button" id="provider-toggle" class="toggle" aria-pressed="true">Provider</button>
-              <button type="button" id="effort-toggle" class="toggle" aria-pressed="true">Effort</button>
+      <section class="panel">
+        <h2 data-i18n="section.activity">Activity</h2>
+        <div class="row">
+          <span class="row-label" data-i18n="activity.type">Activity type</span>
+          <div class="segmented" role="radiogroup" data-i18n-aria="activity.type">
+            <button type="button" class="seg" role="radio" data-mode="playing" data-i18n="mode.playing">Playing</button>
+            <button type="button" class="seg" role="radio" data-mode="watching" data-i18n="mode.watching">Watching</button>
+            <button type="button" class="seg" role="radio" data-mode="listening" data-i18n="mode.listening">Listening</button>
+            <button type="button" class="seg" role="radio" data-mode="competing" data-i18n="mode.competing">Competing</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label"><span data-i18n="dnd.label">Do Not Disturb</span><small data-i18n="dnd.hint">Hide the activity; detection keeps running.</small></span>
+          <button type="button" id="dnd-toggle" class="switch end" role="switch" data-i18n-aria="dnd.label"></button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 data-i18n="section.details">Details shown</h2>
+        <div class="row">
+          <span class="row-label"><span data-i18n="labels.label">Labels</span><small data-i18n="labels.hint">Plan replaces "Subscription" and needs Provider.</small></span>
+          <div class="checks">
+            <button type="button" id="provider-toggle" class="check" role="checkbox" data-i18n="labels.provider">Provider</button>
+            <button type="button" id="plan-toggle" class="check" role="checkbox" data-i18n="labels.plan">Plan</button>
+            <button type="button" id="effort-toggle" class="check" role="checkbox" data-i18n="labels.effort">Effort</button>
+            <button type="button" id="sessions-toggle" class="check" role="checkbox" data-i18n="labels.sessions">Sessions</button>
+            <button type="button" id="model-icon-toggle" class="check" role="checkbox" data-i18n="labels.modelIcon">Model icon</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label"><span data-i18n="limits.label">Usage limits</span><small data-i18n="limits.hint">What Discord shows. The tray menu always shows all.</small></span>
+          <div class="limit-line">
+            <button type="button" id="limits-toggle" class="switch" role="switch" data-i18n-aria="limits.label"></button>
+            <div class="checks">
+              <button type="button" id="limit-5h-toggle" class="check" role="checkbox" data-i18n="limits.5h">5-hour</button>
+              <button type="button" id="limit-all-toggle" class="check" role="checkbox" data-i18n="limits.weekly">Weekly</button>
+              <button type="button" id="limit-fable-toggle" class="check" role="checkbox" data-i18n="limits.fable">Fable</button>
             </div>
-            <p>Controls provider and effort labels in Discord RPC.</p>
-            <label>Limits</label>
-            <div class="limit-controls">
-              <button type="button" id="limits-toggle" class="toggle" aria-pressed="true">Shown</button>
-              <div class="limit-chips" role="group" aria-label="Usage limits shown in Discord RPC">
-                <button type="button" id="limit-5h-toggle" class="toggle compact" aria-pressed="true">5h</button>
-                <button type="button" id="limit-all-toggle" class="toggle compact" aria-pressed="true">All</button>
-                <button type="button" id="limit-fable-toggle" class="toggle compact" aria-pressed="true">Fable</button>
-              </div>
-            </div>
-            <p class="limit-help">
-              <span>Limits shown in Discord RPC: 5h, weekly, weekly Fable.</span>
-              <button type="button" id="refresh-limits" class="ghost">Refresh</button>
-            </p>
+            <button type="button" id="refresh-limits" class="link" data-i18n="limits.refresh">Refresh</button>
           </div>
         </div>
       </section>
 
-      <section class="panel preview-panel" data-section="preview">
-        <button type="button" class="legend section-toggle" aria-expanded="true">
-          <span class="legend-label">Preview</span>
-          <span class="legend-summary"></span>
-        </button>
-        <div class="panel-content">
-          <div class="panel-inner">
-            <div class="rpc-preview">
-              <span id="preview-activity" class="preview-activity">Playing</span>
-              <div class="rpc-card">
-                <img class="preview-icon" src="./clawd.webp" alt="" />
-                <div class="preview-copy">
-                  <strong id="preview-primary">Claude AI</strong>
-                  <span id="preview-secondary"></span>
-                  <span id="preview-tertiary"></span>
-                  <div id="preview-buttons" class="preview-buttons"></div>
-                </div>
-              </div>
-            </div>
+      <section class="panel">
+        <h2 data-i18n="section.notifications">Notifications</h2>
+        <div class="row">
+          <span class="row-label"><span data-i18n="alerts.label">Usage alerts</span><small data-i18n="alerts.hint">Windows notifications for the 5-hour session.</small></span>
+          <div class="checks">
+            <button type="button" id="alert-80-toggle" class="check" role="checkbox" data-i18n="alerts.80">At 80%</button>
+            <button type="button" id="alert-95-toggle" class="check" role="checkbox" data-i18n="alerts.95">At 95%</button>
+            <button type="button" id="alert-reset-toggle" class="check" role="checkbox" data-i18n="alerts.reset">On reset</button>
           </div>
         </div>
       </section>
 
-      <section class="panel presets" data-section="presets">
-        <button type="button" class="legend section-toggle" aria-expanded="true">Presets</button>
-        <div class="panel-content">
-          <div class="panel-inner presets-grid">
-            <button type="button" data-preset="claude">Claude</button>
-            <button type="button" data-preset="desktop">Desktop</button>
-            <button type="button" data-preset="repo">GitHub repo</button>
+      <section class="panel">
+        <h2 data-i18n="section.privacy">Privacy</h2>
+        <div class="row top">
+          <label class="row-label" for="private-projects"><span data-i18n="privacy.projects">Private projects</span><small data-i18n="privacy.projectsHint">Nothing is shown while you work in these folders.</small></label>
+          <textarea id="private-projects" rows="3" spellcheck="false" placeholder="client-acme&#10;D:\work\secret"></textarea>
+        </div>
+        <div class="row">
+          <span class="row-label"><span data-i18n="privacy.chat">Hide in Chat tab</span><small data-i18n="privacy.chatHint">Show nothing while the Claude Desktop Chat tab is open.</small></span>
+          <button type="button" id="hide-chat-toggle" class="switch end" role="switch" data-i18n-aria="privacy.chat"></button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 data-i18n="section.text">Discord text</h2>
+        <div class="row">
+          <label class="row-label" for="details-template" data-i18n="text.details">Main line</label>
+          <input id="details-template" maxlength="128" spellcheck="false" placeholder="Claude Desktop (Code)" />
+        </div>
+        <div class="row">
+          <label class="row-label" for="state-template" data-i18n="text.state">Second line</label>
+          <input id="state-template" maxlength="128" spellcheck="false" placeholder="{model} | {plan} | {limits}" />
+        </div>
+        <p class="note vars" data-i18n="text.hint">Leave empty for the default text.</p>
+      </section>
+
+      <section class="panel">
+        <h2><span data-i18n="section.buttons">Buttons</span> <em data-i18n="buttons.watchingOnly">Watching only</em></h2>
+        <p class="note" data-i18n="buttons.note">Shown on your Discord activity to viewers with Discord Nitro.</p>
+        <div class="btn-grid">
+          <span></span><span class="col-head" data-i18n="buttons.label">Label</span><span class="col-head" data-i18n="buttons.url">URL</span>
+          <label for="label0" data-i18n="buttons.one">Button 1</label>
+          <input id="label0" maxlength="32" spellcheck="false" />
+          <input id="url0" spellcheck="false" aria-label="Button 1 URL" />
+          <label for="label1" data-i18n="buttons.two">Button 2</label>
+          <input id="label1" maxlength="32" spellcheck="false" />
+          <input id="url1" spellcheck="false" aria-label="Button 2 URL" />
+        </div>
+        <div class="quick">
+          <span data-i18n="buttons.quick">Quick fill</span>
+          <button type="button" class="chip" data-preset="claude">Claude</button>
+          <button type="button" class="chip" data-preset="desktop">Desktop</button>
+          <button type="button" class="chip" data-preset="repo">GitHub repo</button>
+          <button type="button" id="clear" class="link" data-i18n="buttons.clear">Clear buttons</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 data-i18n="section.app">App</h2>
+        <div class="row">
+          <label class="row-label" for="language" data-i18n="app.language">Language</label>
+          <select id="language">
+            <option value="auto" data-i18n="app.languageAuto">Automatic</option>
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="row-label"><span data-i18n="app.diagnostic">Troubleshooting</span><small data-i18n="app.diagnosticHint">Copies what the app detects.</small></span>
+          <div class="diag">
+            <button type="button" id="copy-diagnostic" data-i18n="app.copyDiagnostic">Copy diagnostic</button>
+            <span id="diagnostic-message" class="hint"></span>
           </div>
         </div>
+        <textarea id="diagnostic-text" class="diag-text" rows="8" readonly hidden aria-label="Diagnostic"></textarea>
       </section>
 
       <footer>
-        <span id="message"></span>
-        <button type="button" id="clear" class="ghost">Clear</button>
-        <button type="button" id="apply">Apply</button>
-        <button type="button" id="close" class="primary">Close</button>
+        <span id="message" class="saved ok" data-i18n="footer.saved">Changes save automatically</span>
+        <button type="button" id="close" class="primary" data-i18n="footer.close">Close</button>
       </footer>
     </main>
   </body>

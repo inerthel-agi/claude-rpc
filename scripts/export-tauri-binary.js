@@ -1,54 +1,24 @@
 #!/usr/bin/env node
 'use strict';
 
+// Copies the release executable to bin/claude-rpc.exe (Windows only).
+
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const releaseDir = path.join(ROOT, 'src-tauri', 'target', 'release');
-const targetDir = path.join(ROOT, 'bin');
+const source = path.join(ROOT, 'src-tauri', 'target', 'release', 'claude-rpc.exe');
+const target = path.join(ROOT, 'bin', 'claude-rpc.exe');
 
-function fail(message) {
-  console.error(`[export-tauri] ${message}`);
+if (process.platform !== 'win32') {
+  console.error('[export-tauri] Claude RPC only builds on Windows');
+  process.exit(1);
+}
+if (!fs.existsSync(source)) {
+  console.error(`[export-tauri] missing ${path.relative(ROOT, source)}`);
   process.exit(1);
 }
 
-function firstExisting(paths) {
-  return paths.find((candidate) => fs.existsSync(candidate));
-}
-
-function copyExecutable(source, target) {
-  fs.rmSync(path.join(targetDir, 'runtime'), { recursive: true, force: true });
-  fs.rmSync(path.join(targetDir, 'claude-rpc-daemon.exe'), { force: true });
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(source, target);
-  if (process.platform !== 'win32') {
-    fs.chmodSync(target, 0o755);
-  }
-  console.log(`[export-tauri] ${path.relative(ROOT, target)}`);
-}
-
-if (process.platform === 'win32') {
-  const source = firstExisting([
-    path.join(releaseDir, 'claude-rpc.exe'),
-    path.join(releaseDir, 'claude_rpc_tray.exe'),
-  ]);
-  if (!source) fail('missing Tauri release exe');
-  copyExecutable(source, path.join(targetDir, 'claude-rpc.exe'));
-} else if (process.platform === 'darwin') {
-  const source = firstExisting([
-    path.join(releaseDir, 'claude-rpc'),
-    path.join(releaseDir, 'claude_rpc_tray'),
-  ]);
-  if (!source) fail('missing Tauri release binary');
-  const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
-  copyExecutable(source, path.join(targetDir, `claude-rpc-macos-${arch}`));
-} else {
-  const source = firstExisting([
-    path.join(releaseDir, 'claude-rpc'),
-    path.join(releaseDir, 'claude_rpc_tray'),
-  ]);
-  if (!source) fail(`unsupported platform ${process.platform}: missing Tauri release binary`);
-  copyExecutable(source, path.join(targetDir, `claude-rpc-${process.platform}-${os.arch()}`));
-}
+fs.mkdirSync(path.dirname(target), { recursive: true });
+fs.copyFileSync(source, target);
+console.log(`[export-tauri] ${path.relative(ROOT, target)}`);

@@ -116,7 +116,7 @@ pub(super) fn modified_ms(path: &Path) -> Option<u64> {
     system_time_ms(modified)
 }
 
-pub(super) fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     system_time_ms(SystemTime::now()).unwrap_or(0)
 }
 
@@ -148,7 +148,7 @@ pub(super) fn claude_dir() -> PathBuf {
         .unwrap_or_else(|| home_dir().join(".claude"))
 }
 
-pub(super) fn app_dir() -> PathBuf {
+pub(crate) fn app_dir() -> PathBuf {
     std::env::var("CLAUDE_RPC_DIR")
         .ok()
         .map(|value| expand_home(&value))
@@ -190,6 +190,18 @@ pub(super) fn expand_home(value: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleans_and_truncates_text() {
+        assert_eq!(truncate("abcdef".into(), 10), "abcdef");
+        assert_eq!(truncate("abcdefghijkl".into(), 8), "abcde...");
+        assert_eq!(
+            sanitize_field(Some("  <b>Hi</b>\n  there  "), 64).as_deref(),
+            Some("bHi/b there")
+        );
+        assert_eq!(sanitize_field(Some("   "), 10), None);
+        assert_eq!(strip_ansi("\u{1b}[1mOpus\u{1b}[22m 5"), "Opus 5");
+    }
 
     #[test]
     fn parses_iso_timestamps_as_utc() {

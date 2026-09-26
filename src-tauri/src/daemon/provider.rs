@@ -44,6 +44,50 @@ pub(super) fn detect_provider() -> String {
     }
 }
 
+// Subscription plan of the signed-in Claude account, from the OAuth
+// credentials Claude Code stores ("subscriptionType": "max",
+// "rateLimitTier": "default_claude_max_5x"), falling back to the account
+// profile cached in ~/.claude.json ("organizationType": "claude_max").
+pub(super) fn detect_plan() -> Option<String> {
+    let read = |path: PathBuf| -> Option<Value> {
+        let raw = fs::read_to_string(path).ok()?;
+        serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()
+    };
+    let from_credentials = read(claude_dir().join(".credentials.json")).and_then(|value| {
+        let oauth = value.get("claudeAiOauth")?;
+        plan_label(
+            oauth.get("subscriptionType")?.as_str()?,
+            oauth.get("rateLimitTier").and_then(Value::as_str),
+        )
+    });
+    from_credentials.or_else(|| {
+        let value = read(home_dir().join(".claude.json"))?;
+        let account = value.get("oauthAccount")?;
+        plan_label(
+            account.get("organizationType")?.as_str()?,
+            account
+                .get("organizationRateLimitTier")
+                .and_then(Value::as_str),
+        )
+    })
+}
+
+pub(super) fn plan_label(kind: &str, tier: Option<&str>) -> Option<String> {
+    let kind = kind.trim().to_ascii_lowercase();
+    let tier = tier.unwrap_or_default().to_ascii_lowercase();
+    let label = match kind.trim_start_matches("claude_") {
+        "free" => "Claude Free",
+        "pro" => "Claude Pro",
+        "max" if tier.contains("20x") => "Claude Max (20x)",
+        "max" if tier.contains("5x") => "Claude Max (5x)",
+        "max" => "Claude Max",
+        "team" => "Claude Team",
+        "enterprise" => "Claude Enterprise",
+        _ => return None,
+    };
+    Some(label.into())
+}
+
 pub(super) fn is_present(value: Option<&str>) -> bool {
     value.map(|value| !value.trim().is_empty()).unwrap_or(false)
 }
@@ -128,5 +172,29 @@ mod tests {
         ));
         assert!(has_claude_account_auth(r#"{"claudeAiOauth":{}}"#));
         assert!(!is_present(Some("  ")));
+    }
+
+    #[test]
+    fn labels_subscription_plans() {
+        for (kind, tier, expected) in [
+            (
+                "max",
+                Some("default_claude_max_5x"),
+                Some("Claude Max (5x)"),
+            ),
+            (
+                "max",
+                Some("default_claude_max_20x"),
+                Some("Claude Max (20x)"),
+            ),
+            ("claude_max", None, Some("Claude Max")),
+            ("pro", None, Some("Claude Pro")),
+            ("free", None, Some("Claude Free")),
+            ("team", Some("default_claude_team"), Some("Claude Team")),
+            ("claude_enterprise", None, Some("Claude Enterprise")),
+            ("unknown", None, None),
+        ] {
+            assert_eq!(plan_label(kind, tier).as_deref(), expected);
+        }
     }
 }

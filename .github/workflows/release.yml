@@ -33,6 +33,7 @@ jobs:
       - run: npm ci
 
       - run: node --check tauri-ui/main.js
+      - run: node --check tauri-ui/tray.js
 
       - run: npm test
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## v3.9.0 (2026-09-26)
+
+Claude RPC is now Windows only: macOS support has been removed.
+
+### Added
+- **Usage alerts**: Windows notifications when the 5-hour session passes 80% and 95%, and when it resets. Each one can be turned off in Settings > Notifications.
+- **Pause activity**: the tray menu can hide the activity for 30 minutes, 1 hour or until midnight, then resume on its own. "Always" is the permanent Do Not Disturb.
+- **Private projects**: nothing is published while you work in the listed folders (a folder name or a full path). An option also hides the activity while the Claude Desktop Chat tab is open.
+- **Custom Discord text**: write the two Discord lines yourself with variables such as `{model}`, `{plan}`, `{effort}`, `{limit5h}`, `{project}` or `{sessions}`. Leave them empty for the default text.
+- **Usage chart**: the tray menu draws the 5-hour usage of the last 24 hours under its bar. The history stays on your PC.
+- **French interface**: settings and tray menu in French or English, following Windows by default (Settings > App > Language).
+- **Claude plan label**: a **Plan** option next to Provider shows your Claude plan (Claude Free, Pro, Max (5x), Max (20x), Team or Enterprise) instead of "Subscription". It is read from Claude Code's local sign-in data.
+- **Live tray tooltip**: hovering the tray icon shows the model and the usage limits.
+- **Model icon** (optional): the small Discord image shows the model family (Opus, Sonnet, Fable, Haiku) instead of the terminal icon.
+- **Sessions count**: the tray menu shows how many Claude Code sessions are open; Discord can show it too.
+- **What's new**: release notes appear before an update is installed, and once more after the restart.
+- **Copy diagnostic**: Settings > App copies what the app detects (processes, model source, provider) to paste in a bug report.
+
+### Changed
+- **Redesigned tray menu**: a status card shows the Discord connection, the model and effort, the app and plan, and a usage bar with its reset time for every limit, whatever Discord shows. The bars keep updating when Claude is closed. The menu window now fits its content.
+- **Redesigned settings window**: status tiles, the Discord preview, and sections for Activity, Details shown, Notifications, Privacy, Discord text, Buttons and App.
+- Settings save automatically; the Apply button is gone. Closing the window saves any pending edit first, and changes made from the tray menu are picked up by an open settings window instead of being overwritten.
+- The preview says why nothing is on Discord (paused, private project, Claude not running) instead of showing a card that is not published, and hides buttons whose address Discord would reject.
+- Refresh re-reads usage directly instead of opening the usage page in the browser.
+- Detection does less work: the Claude Desktop window is read every 2 seconds instead of 4 times a second, the provider files every 5 seconds, and the status file is only rewritten when it changes.
+- The usage request runs in the background, so a slow answer no longer freezes Discord updates, the settings or Quit.
+
+### Fixed
+- A half-written settings file could reset every setting to its default (DND off, everything shown). The file is now replaced in one step, and a file that cannot be read keeps the last good settings.
+- A fallback usage value of 1 could be shown as 100%.
+- In long Claude Desktop conversations the "Model:" button could be missed, which let other labels be taken for the model.
+- With the usage popover open in the Code tab, the model could show as "Claude Fable 0". Labels with a percentage or a version 0 are no longer taken for models, and the session log is used when the "Model:" button is not found.
+- Outside a project, Claude Desktop could show a project name such as `claude-rpc` as the model.
+- The Inter font is bundled with the app; it was blocked by the app's security policy and the system font was used instead.
+- Settings checkboxes showed no checkmark.
+- The tray menu reports a failed update download, and says "Up to date" after a check that finds nothing.
+- The "System" theme follows Windows when its theme changes.
+
+
 ## v3.8.0 (2026-09-25)
 
 ### Added

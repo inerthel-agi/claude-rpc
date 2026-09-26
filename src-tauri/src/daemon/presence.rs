@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) -> Option<Value> {
-    if result.client == ClientType::Idle {
+    if result.client == ClientType::Idle || hidden_reason(result, config).is_some() {
         return None;
     }
 
@@ -18,8 +18,8 @@ pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) ->
         "type": activity_type,
         "created_at": now_ms(),
         "instance": false,
-        "details": build_details(result, &mode),
-        "state": build_state(result, config),
+        "details": final_details(result, &mode, config),
+        "state": final_state(result, config),
         "assets": {
             "large_image": logo_image(),
             "large_text": "Powered by Anthropic",
@@ -27,6 +27,16 @@ pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) ->
             "small_text": small_image_text(result),
         },
     });
+    if config.model_icon {
+        if let Some(family) = model_family(result.model.as_deref()) {
+            activity["assets"]["small_image"] = json!(model_icon_image(family));
+            activity["assets"]["small_text"] = json!(result
+                .model
+                .as_deref()
+                .and_then(|model| model.split(" | ").next())
+                .unwrap_or("Claude"));
+        }
+    }
 
     if let Some(started_at_ms) = result.started_at_ms {
         activity["timestamps"] = json!({ "start": started_at_ms / 1000 });
@@ -64,12 +74,159 @@ pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> St
     );
     let mut parts = vec![model];
     if config.show_provider {
-        parts.push(result.provider.clone());
+        // The plan ("Claude Max (5x)") replaces the generic "Subscription".
+        match result.plan.as_ref().filter(|_| config.show_plan) {
+            Some(plan) => parts.push(plan.clone()),
+            None => parts.push(result.provider.clone()),
+        }
+    }
+    if config.show_sessions && result.code_instances > 1 {
+        parts.push(format!("{} sessions", result.code_instances));
     }
     if let Some(limits) = result.limits_line.as_deref() {
         parts.push(limits.to_string());
     }
     truncate(parts.join(" | "), 128)
+}
+
+// Discord lines as published: the user's template when set, else built-in.
+pub(super) fn final_details(result: &DetectionResult, mode: &str, config: &ClaudeConfig) -> String {
+    render_template(&config.details_template, result).unwrap_or_else(|| build_details(result, mode))
+}
+
+pub(super) fn final_state(result: &DetectionResult, config: &ClaudeConfig) -> String {
+    render_template(&config.state_template, result).unwrap_or_else(|| build_state(result, config))
+}
+
+// Replaces {model} {effort} {plan} {provider} {limits} {limit5h} {limitWeekly}
+// {limitFable} {sessions} {project} {client} {mode}. None when the template is
+// empty or renders to under 2 characters (Discord's minimum).
+pub(super) fn render_template(template: &str, result: &DetectionResult) -> Option<String> {
+    let template = template.trim();
+    if template.is_empty() {
+        return None;
+    }
+    let model_line = result.model.as_deref().unwrap_or("Claude");
+    let model = model_line.split(" | ").next().unwrap_or("Claude");
+    let effort = model_line
+        .split(" | ")
+        .find(|part| is_effort_label(part))
+        .unwrap_or("");
+    let limit = |label: &str| {
+        result
+            .limits
+            .iter()
+            .find(|entry| entry.label == label)
+            .map(|entry| format!("{}%", entry.used_percent))
+            .unwrap_or_default()
+    };
+    let client = match result.client {
+        ClientType::Desktop => "Claude Desktop",
+        ClientType::Code => "Claude Code",
+        ClientType::Idle => "Claude",
+    };
+    let vars = [
+        ("{model}", model.to_string()),
+        ("{effort}", effort.to_string()),
+        (
+            "{plan}",
+            result
+                .plan
+                .clone()
+                .unwrap_or_else(|| result.provider.clone()),
+        ),
+        ("{provider}", result.provider.clone()),
+        (
+            "{limits}",
+            result
+                .limits_line
+                .as_deref()
+                .map(|line| line.trim_start_matches("Limits: ").to_string())
+                .unwrap_or_default(),
+        ),
+        ("{limit5h}", limit("5h")),
+        ("{limitWeekly}", limit("All")),
+        ("{limitFable}", limit("Fable")),
+        ("{sessions}", result.code_instances.max(1).to_string()),
+        (
+            "{project}",
+            project_name(result.project_dir.as_deref()).unwrap_or_default(),
+        ),
+        ("{client}", client.to_string()),
+        ("{mode}", result.mode.clone().unwrap_or_default()),
+    ];
+    let mut rendered = template.to_string();
+    for (key, value) in vars {
+        rendered = rendered.replace(key, &value);
+    }
+    let rendered = sanitize_field(Some(&rendered), 128)?;
+    (rendered.chars().count() >= 2).then_some(rendered)
+}
+
+pub(super) fn project_name(dir: Option<&str>) -> Option<String> {
+    dir?.replace('\\', "/")
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+// Why nothing is published for this result, if anything hides it.
+pub(super) fn hidden_reason(
+    result: &DetectionResult,
+    config: &ClaudeConfig,
+) -> Option<&'static str> {
+    if config.hide_in_chat
+        && result.client == ClientType::Desktop
+        && result.mode.as_deref() == Some("Chat")
+    {
+        return Some("chat");
+    }
+    let coding = result.client == ClientType::Code || result.mode.as_deref() == Some("Code");
+    if coding
+        && result
+            .project_dir
+            .as_deref()
+            .is_some_and(|dir| is_private_project(dir, &config.private_projects))
+    {
+        return Some("private");
+    }
+    None
+}
+
+// An entry without a slash matches the project folder name; one with a slash
+// matches that path and everything below it. Case-insensitive.
+pub(super) fn is_private_project(dir: &str, entries: &[String]) -> bool {
+    let dir = dir
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let name = dir.rsplit('/').next().unwrap_or("");
+    entries.iter().any(|entry| {
+        let entry = entry
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if entry.contains('/') {
+            dir == entry || dir.starts_with(&format!("{entry}/"))
+        } else {
+            !entry.is_empty() && name == entry
+        }
+    })
+}
+
+pub(super) fn model_family(model: Option<&str>) -> Option<&'static str> {
+    let model = model?.to_ascii_lowercase();
+    ["fable", "opus", "sonnet", "haiku"]
+        .into_iter()
+        .find(|family| model.contains(family))
+}
+
+pub(super) fn model_icon_image(family: &str) -> String {
+    format!(
+        "https://raw.githubusercontent.com/inerthel-agi/claude-rpc/main/logo/model-{family}.png"
+    )
 }
 
 pub(super) fn format_rpc_model(model: &str, show_effort: bool) -> String {
@@ -136,6 +293,7 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         "model": result.model,
         "limits": result.limits_line,
         "provider": result.provider,
+        "plan": result.plan,
         "rpcMode": config.rpc_mode,
         "dnd": config.dnd,
         "showLimits": config.show_limits,
@@ -143,8 +301,21 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         "showLimitAll": config.show_limit_all,
         "showLimitFable": config.show_limit_fable,
         "showProvider": config.show_provider,
+        "showPlan": config.show_plan,
         "showEffort": config.show_effort,
         "buttons": config.buttons,
+        "showSessions": config.show_sessions,
+        "sessions": result.code_instances,
+        "modelIcon": config.model_icon,
+        "detailsTemplate": config.details_template,
+        "stateTemplate": config.state_template,
+        "hidden": hidden_reason(result, config),
+        "project": result.project_dir,
+        "limitBuckets": result
+            .limits
+            .iter()
+            .map(|entry| (entry.label.clone(), entry.used_percent))
+            .collect::<Vec<_>>(),
     }))
     .unwrap_or_default()
 }
@@ -152,6 +323,72 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renders_custom_templates() {
+        let result = DetectionResult {
+            client: ClientType::Desktop,
+            mode: Some("Code".into()),
+            model: Some("Claude Opus 5.5 | High".into()),
+            provider: "Subscription".into(),
+            plan: Some("Claude Max (5x)".into()),
+            project_dir: Some(r"D:\work\claude-rpc".into()),
+            limits: vec![UsageLimitEntry {
+                label: "5h".into(),
+                used_percent: 66,
+                reset: None,
+                updated_at_ms: 0,
+            }],
+            ..DetectionResult::default()
+        };
+        assert_eq!(
+            render_template("{model} · {effort} | {plan} | 5h {limit5h}", &result).as_deref(),
+            Some("Claude Opus 5.5 · High | Claude Max (5x) | 5h 66%")
+        );
+        assert_eq!(
+            render_template("In {project} ({client}, {mode})", &result).as_deref(),
+            Some("In claude-rpc (Claude Desktop, Code)")
+        );
+        // Empty or too-short templates fall back to the built-in text.
+        assert_eq!(render_template("  ", &result), None);
+        assert_eq!(render_template("{limitWeekly}", &result), None);
+        let config = ClaudeConfig {
+            state_template: "{model}".into(),
+            ..ClaudeConfig::default()
+        };
+        assert_eq!(final_state(&result, &config), "Claude Opus 5.5");
+    }
+
+    #[test]
+    fn hides_private_projects_and_chat() {
+        let entries = vec!["secret-app".to_string(), r"D:\clients".to_string()];
+        assert!(is_private_project(r"D:\work\Secret-App", &entries));
+        assert!(is_private_project("D:/clients/acme/api", &entries));
+        assert!(!is_private_project(r"D:\clientsx\acme", &entries));
+        assert!(!is_private_project(r"D:\work\claude-rpc", &entries));
+
+        let config = ClaudeConfig {
+            private_projects: entries,
+            hide_in_chat: true,
+            ..ClaudeConfig::default()
+        };
+        let coding = DetectionResult {
+            client: ClientType::Code,
+            project_dir: Some(r"D:\work\secret-app".into()),
+            ..DetectionResult::default()
+        };
+        assert_eq!(hidden_reason(&coding, &config), Some("private"));
+        assert!(build_activity(&coding, &config).is_none());
+        let chat = DetectionResult {
+            client: ClientType::Desktop,
+            mode: Some("Chat".into()),
+            project_dir: Some(r"D:\work\secret-app".into()),
+            ..DetectionResult::default()
+        };
+        assert_eq!(hidden_reason(&chat, &config), Some("chat"));
+        assert_eq!(model_family(Some("Claude Fable 5.1 | High")), Some("fable"));
+        assert_eq!(model_family(None), None);
+    }
 
     #[test]
     fn displays_client_labels_without_a_project() {

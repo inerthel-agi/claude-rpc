@@ -2,124 +2,102 @@
 
 # Claude RPC
 
-Tauri-based Discord Rich Presence for Claude Code and Claude Desktop on Windows and macOS.
+Claude RPC shows your Claude Code and Claude Desktop activity as a Discord Rich Presence on Windows. A tray app detects the running Claude client, the model and effort, the provider or plan and the usage limits, then publishes them to the Discord desktop app.
 
-## Features
+## Requirements
 
-- Native Tauri/Rust system tray app
-- No bundled Node.js, Python, PyInstaller, or sidecar daemon
-- Discord IPC implemented in Rust
-- Single process app: `Claude RPC`
-- 250 ms detection polling for Desktop model and effort switches
-- Claude Code and Claude Desktop process detection on Windows and macOS
-- Claude Desktop mode detection: Chat, Code, Cowork, Dispatch on Windows; Chat, Code, Cowork on macOS
-- Claude Desktop model detection on macOS from Chat/Cowork local storage, Cowork local agent sessions, and Code session fallback
-- Claude Desktop Code effort detection on macOS from `ccd-effort-level`
-- Claude Code model/project/session timestamp from `~/.claude/projects/*.jsonl`, including `/model` command output
-- Model detection uses a per-session cache and `~/.claude.json` fallback during long loads or large attachments
-- Provider detection from Claude settings, env, API key helpers, `~/.claude.json`, or OAuth credential patterns
-- Usage limit display with cached values: 5h and All
-- Model names for the current Claude Fable 5.1, Opus 5.5, Sonnet 5, and Haiku 4.5 IDs
-- Optional visibility toggles for provider, effort, and usage limits
-- RPC modes: Playing, Watching, Listening, Competing
-- Optional Discord buttons in Watching mode
-- DND mode to clear Discord activity while detection keeps running
-- Dark/System/Light settings window
-- Built-in auto-updater: checks signed GitHub releases on startup, notifies in the settings window and tray, installs in place
+- Windows 10 or 11 with the Microsoft Edge WebView2 runtime.
+- The Discord desktop app, running and signed in.
+- Claude Code (CLI) or Claude Desktop.
 
-## Download
+To build from source:
 
-Use the latest GitHub release:
+- Rust 1.88.0 (the version used by CI and releases).
+- Node.js 22 and npm.
+- Visual Studio Build Tools with the C++ workload.
 
-- `claude-rpc.exe` - portable app
-- `Claude.RPC_3.8.0_x64-setup.exe` - Windows installer
+## Install
 
-Install v3.7.0 or later manually if you have an earlier version: its updater signing key has changed. After that installation, the app can verify and offer later signed updates from the settings window or tray menu.
+Download one of these files from the latest GitHub release:
 
-## Build
+- `Claude.RPC_3.9.0_x64-setup.exe`: installer.
+- `claude-rpc.exe`: portable executable.
 
-Requirements:
+Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
 
-- Rust + Cargo
-- Node.js only for Tauri CLI during build
-- Visual Studio Build Tools on Windows
-- Xcode Command Line Tools on macOS
+Build from source:
 
 ```powershell
-npm install
+npm ci
 npm test
-npm run tauri:build:windows
+npm run build
 ```
 
-Outputs:
+`npm run build` writes `src-tauri\target\release\claude-rpc.exe`, the installer under `src-tauri\target\release\bundle\nsis\`, and a copy at `bin\claude-rpc.exe`. The signing step at the end fails without `TAURI_SIGNING_PRIVATE_KEY`; the executable and installer are already written at that point.
 
-```text
-bin\claude-rpc.exe
-src-tauri\target\release\bundle\nsis\Claude RPC_3.8.0_x64-setup.exe
-```
+## Usage
 
-Build macOS:
+Start Claude RPC. It runs in the notification area.
 
-```bash
-npm install
-npm test
-npm run tauri:build:macos
-```
+- Left-click the icon to open the settings.
+- Right-click the icon to open the menu: live status card with usage bars, pause (30 minutes, 1 hour, until midnight, or always), start with Windows, activity type, updates.
+- Hover the icon to see the model and the usage limits.
 
-Outputs:
-
-```text
-bin/claude-rpc-macos-arm64
-src-tauri/target/release/bundle/macos/Claude RPC.app
-src-tauri/target/release/bundle/dmg/Claude RPC_3.8.0_aarch64.dmg
-```
+Settings save as soon as they change. The Discord preview at the top of the settings shows the card as published, or why nothing is published.
 
 ## Configuration
 
-Settings are stored at:
+Settings are stored in `%USERPROFILE%\.claude-rpc\config.json`. The settings window edits every key below.
 
-```text
-%USERPROFILE%\.claude-rpc\config.json
-~/.claude-rpc/config.json
-```
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `rpcMode` | string | `playing` | Activity type: `playing`, `watching`, `listening` or `competing`. |
+| `dnd` | bool | `false` | Publish nothing while detection keeps running. |
+| `pauseUntilMs` | number | `0` | Publish nothing until this Unix time in milliseconds. |
+| `showProvider` | bool | `true` | Show the provider (Subscription, Anthropic API, AWS Bedrock, Google Vertex, Microsoft Azure). |
+| `showPlan` | bool | `true` | Replace "Subscription" with the Claude plan. Needs `showProvider`. |
+| `showEffort` | bool | `true` | Show the thinking effort. |
+| `showSessions` | bool | `false` | Show the number of open Claude Code sessions when there are two or more. |
+| `modelIcon` | bool | `false` | Use the model family icon as the small Discord image. |
+| `showLimits` | bool | `true` | Show usage limits on Discord. |
+| `showLimit5h`, `showLimitAll`, `showLimitFable` | bool | `true` | Choose the 5-hour, weekly and Fable weekly limits shown on Discord. |
+| `detailsTemplate`, `stateTemplate` | string | `""` | Custom Discord lines. Empty uses the default text. |
+| `privateProjects` | string list | `[]` | Folder names or paths whose sessions are never published. |
+| `hideInChat` | bool | `false` | Publish nothing while the Claude Desktop Chat tab is open. |
+| `alert80`, `alert95`, `alertReset` | bool | `true` | Windows notifications for the 5-hour session. |
+| `language` | string | `auto` | Interface language: `auto`, `en` or `fr`. |
+| `buttons` | list | Claude, GitHub Repo | Up to two `{ "label", "url" }` buttons, sent in `watching` mode only. |
 
-Example:
+Template variables: `{model}`, `{effort}`, `{plan}`, `{provider}`, `{limits}`, `{limit5h}`, `{limitWeekly}`, `{limitFable}`, `{sessions}`, `{project}`, `{client}`, `{mode}`.
 
-```json
-{
-  "dnd": false,
-  "showLimits": true,
-  "showLimit5h": true,
-  "showLimitAll": true,
-  "showLimitFable": true,
-  "showProvider": true,
-  "showEffort": true,
-  "rpcMode": "watching",
-  "buttons": [
-    { "label": "Claude", "url": "https://claude.ai" },
-    { "label": "GitHub Repo", "url": "https://github.com/inerthel-agi/claude-rpc" }
-  ]
-}
-```
+Environment variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CLAUDE_RPC_DIR` | `%USERPROFILE%\.claude-rpc` | Folder for settings, status, usage cache and usage history. |
+| `CLAUDE_DIR_PATH` | `%USERPROFILE%\.claude` | Claude Code data folder. |
+| `DISCORD_CLIENT_ID` | built-in application | Discord application used for the presence. |
+| `SCAN_INTERVAL_MS` | `250` | Process scan interval, minimum 250. |
+| `CLAUDE_MODEL`, `ANTHROPIC_MODEL` | none | Model fallback when no session names one. |
 
 ## Detection
 
-| Target | Method |
+| Target | Source |
 |---|---|
-| Claude Desktop | `claude.exe` process path on Windows, `.app` process path on macOS |
-| Claude Desktop mode | `%APPDATA%\Claude\claude_desktop_config.json` + UI Automation on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS |
-| Claude Desktop model/effort | UI Automation labels on Windows; Chat/Cowork local storage, Cowork local agent sessions, Code session fallback, and `ccd-effort-level` on macOS |
-| Claude usage limits | UI Automation on Usage page + `.claude-rpc\limits-cache.json` on Windows, cached values on macOS |
-| Claude Code | `claude.exe`/`claude` process on Windows/macOS, excluding the Chrome native host; recent JSONL activity fallback on other platforms |
-| Claude Code model | active JSONL session tail and `/model` command output, then `~\.claude\settings.json`, env vars, and `~\.claude.json` recent usage as fallbacks; cached per session |
-| Provider | Claude env/settings, API key helpers, `~/.claude.json` OAuth account, Bedrock, Vertex, or Foundry markers |
+| Claude Desktop | `claude.exe` process path. |
+| Desktop mode and model | UI Automation labels of the Claude window, read every 2 seconds, and `%APPDATA%\Claude\claude_desktop_config.json`. |
+| Claude Code model | Latest session log in `~\.claude\projects`, `/model` output, then settings and environment fallbacks. |
+| Plan | `~\.claude\.credentials.json`, then `~\.claude.json`. |
+| Usage limits | Claude usage API with the Claude Code sign-in, and the Claude Desktop usage button and popover. |
 
-## Notes
+## Limitations
 
-Claude usage percentages are only available after Claude exposes them on the Usage page. Use `Refresh` in settings to open the Usage page, then Claude RPC caches the latest valid values.
-
-The v3 refactor removed the legacy Node/Python runtime path. Runtime is now a single Tauri executable.
+- Windows only. macOS support was removed in v3.9.0.
+- Desktop detection reads window labels. A Claude Desktop interface change can break model or mode detection until the app is updated.
+- Discord shows buttons only in `watching` mode, and only to viewers with Discord Nitro.
+- The model icons load from this repository's `main` branch on GitHub.
+- Usage limits need a Claude subscription signed in to Claude Code, or Claude Desktop open.
 
 ## License
 
-ISC
+MIT. See `LICENSE`.

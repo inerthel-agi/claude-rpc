@@ -6,13 +6,6 @@ pub(super) struct ProcessEntry {
     name: String,
 }
 
-#[cfg(target_os = "macos")]
-pub(super) struct MacProcessEntry {
-    process_id: u32,
-    name: String,
-    command: String,
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct ProcessSnapshot {
     pub(super) process_id: u32,
@@ -40,22 +33,7 @@ pub(super) fn scan_claude_processes() -> Vec<ProcessSnapshot> {
         .collect()
 }
 
-#[cfg(target_os = "macos")]
-pub(super) fn scan_claude_processes() -> Vec<ProcessSnapshot> {
-    list_macos_process_entries()
-        .into_iter()
-        .filter(|entry| is_macos_claude_candidate(&entry.name, &entry.command))
-        .map(|entry| ProcessSnapshot {
-            process_id: entry.process_id,
-            name: entry.name,
-            executable_path: Some(entry.command.clone()),
-            command_line: Some(entry.command),
-            creation_date_ms: None,
-        })
-        .collect()
-}
-
-#[cfg(all(not(windows), not(target_os = "macos")))]
+#[cfg(not(windows))]
 pub(super) fn scan_claude_processes() -> Vec<ProcessSnapshot> {
     Vec::new()
 }
@@ -73,18 +51,11 @@ pub(super) fn is_desktop_process(process: &ProcessSnapshot) -> bool {
         .as_deref()
         .unwrap_or("")
         .to_ascii_lowercase();
-    let exe_unix = exe.replace('\\', "/");
     process.name.eq_ignore_ascii_case("claude desktop.exe")
-        || process.name.eq_ignore_ascii_case("claude desktop")
-        || (process.name.eq_ignore_ascii_case("claude")
-            && exe_unix.contains(".app/contents/macos/"))
         || exe.contains("windowsapps")
         || exe.contains("anthropicclaude")
         || exe.contains("\\program files\\claude")
         || exe.contains("\\appdata\\local\\anthropic")
-        || exe_unix.contains("/applications/claude.app/")
-        || exe_unix.contains("/claude.app/contents/macos/")
-        || exe_unix.contains("/library/application support/claude/")
 }
 
 pub(super) fn is_code_process(process: &ProcessSnapshot) -> bool {
@@ -283,79 +254,6 @@ pub(super) fn filetime_to_unix_ms(value: FILETIME) -> Option<u64> {
     let ticks = ((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64;
     let ms = ticks / 10_000;
     ms.checked_sub(WINDOWS_TO_UNIX_EPOCH_MS)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn list_macos_process_entries() -> Vec<MacProcessEntry> {
-    let Ok(output) = std::process::Command::new("/bin/ps")
-        .args(["-axo", "pid=,comm=,command="])
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_macos_process_line)
-        .collect()
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn parse_macos_process_line(line: &str) -> Option<MacProcessEntry> {
-    let (process_id, rest) = split_process_field(line)?;
-    let (comm, rest) = split_process_field(rest)?;
-    let process_id = process_id.parse().ok()?;
-    let command = rest.trim_start().to_string();
-    if command.is_empty() {
-        return None;
-    }
-    Some(MacProcessEntry {
-        process_id,
-        name: command_basename(comm),
-        command,
-    })
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn split_process_field(input: &str) -> Option<(&str, &str)> {
-    let input = input.trim_start();
-    if input.is_empty() {
-        return None;
-    }
-    let end = input.find(char::is_whitespace).unwrap_or(input.len());
-    Some((&input[..end], &input[end..]))
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn is_macos_claude_candidate(name: &str, command: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    let command = command.to_ascii_lowercase();
-    if command.contains("claude-rpc") {
-        return false;
-    }
-    name == "claude"
-        || name == "claude desktop"
-        || command.contains("/applications/claude.app/")
-        || command.contains("/claude.app/contents/macos/")
-        || command.contains("/node_modules/@anthropic-ai/claude-code/")
-        || command.contains("/node_modules/claude-code/")
-        || command.contains("/.claude/local/")
-        || command.contains("/claude-code/")
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn command_basename(command: &str) -> String {
-    let executable = command.split_whitespace().next().unwrap_or(command);
-    executable
-        .trim_matches('"')
-        .trim_end_matches(['\\', '/'])
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(executable)
-        .to_ascii_lowercase()
 }
 
 #[cfg(test)]

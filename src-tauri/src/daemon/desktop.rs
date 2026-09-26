@@ -11,6 +11,7 @@ pub(super) fn read_desktop_info(process_ids: &[u32]) -> DesktopInfo {
         }
         if ui_info.model.is_some() {
             info.model = ui_info.model;
+            info.model_explicit = ui_info.model_explicit;
         }
         if ui_info.effort.is_some() {
             info.effort = ui_info.effort;
@@ -112,7 +113,13 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
     let root = automation.ElementFromHandle(hwnd)?;
     let condition = automation.CreateTrueCondition()?;
     let elements = root.FindAll(TreeScope_Descendants, &condition)?;
-    let length = elements.Length()?.min(1_500);
+    let length = elements.Length()?;
+    // The sidebar (mode markers) is at the start of the tree and the composer
+    // (model, effort, usage buttons) at the end, with the chat transcript in
+    // between; a long chat used to push the composer past a flat 1,500 cap.
+    let head = length.min(1_500);
+    let tail_start = head.max(length.saturating_sub(1_000));
+    let indices = (0..head).chain(tail_start..length);
 
     let mut names = Vec::new();
     let mut best_model: Option<(DesktopModelCandidate, i32)> = None;
@@ -120,7 +127,7 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
     let mut extended = false;
     let mut explicit_effort = None;
 
-    for index in 0..length {
+    for index in indices {
         let Ok(element) = elements.GetElement(index) else {
             continue;
         };
@@ -186,8 +193,9 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
 
     let mut info = desktop_info_from_ui_names(&names, fallback_mode);
     info.limits = parse_usage_limits(&names);
-    if let Some((candidate, _)) = best_model {
+    if let Some((candidate, score)) = best_model {
         info.model = Some(candidate.model);
+        info.model_explicit = score >= 20;
         info.adaptive |= candidate.adaptive;
         info.extended |= candidate.extended;
         if candidate.effort.is_some() {
@@ -261,289 +269,24 @@ pub(super) fn detect_desktop_model(
     info: &DesktopInfo,
     session: Option<&SessionInfo>,
 ) -> Option<String> {
+    // In the Code tab the session log names the model exactly; a scraped UI
+    // label only wins over it when it is the composer's "Model: ..." button
+    // (the usage popover, for one, lists "Weekly · Fable ... 0%").
+    if info.mode.as_deref() == Some("Code") && !info.model_explicit {
+        if let Some(model) = detect_code_model(session) {
+            return format_desktop_model(&DesktopInfo {
+                model: Some(model),
+                ..info.clone()
+            });
+        }
+    }
     format_desktop_model(info)
-        .or_else(|| read_platform_desktop_model(info.mode.as_deref(), session))
         .or_else(read_settings_model)
         .or_else(|| {
             std::env::var("CLAUDE_MODEL")
                 .ok()
                 .and_then(|v| format_model_name(&v))
         })
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_platform_desktop_model(
-    mode: Option<&str>,
-    session: Option<&SessionInfo>,
-) -> Option<String> {
-    match mode {
-        Some("Code") => append_desktop_effort(
-            read_sticky_model_selector().or_else(|| detect_code_model(session)),
-        ),
-        Some("Cowork") => read_cowork_sticky_model_selector()
-            .or_else(read_sticky_model_selector)
-            .or_else(read_latest_local_agent_model),
-        Some("Chat") => read_sticky_model_selector(),
-        _ => read_sticky_model_selector()
-            .or_else(read_latest_local_agent_model)
-            .or_else(|| append_code_effort(detect_code_model(session))),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn read_platform_desktop_model(
-    _mode: Option<&str>,
-    _session: Option<&SessionInfo>,
-) -> Option<String> {
-    None
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_sticky_model_selector() -> Option<String> {
-    read_desktop_local_storage_value(parse_sticky_model_selector_text)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_cowork_sticky_model_selector() -> Option<String> {
-    read_desktop_local_storage_value(parse_cowork_model_selector_text)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn append_desktop_effort(model: Option<String>) -> Option<String> {
-    let mut model = model?;
-    if let Some(effort) = read_desktop_effort_level() {
-        append_unique_label(&mut model, true, &effort);
-    }
-    Some(model)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_desktop_effort_level() -> Option<String> {
-    read_desktop_local_storage_value(parse_desktop_effort_text)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_desktop_local_storage_value(
-    parser: fn(&str) -> Option<String>,
-) -> Option<String> {
-    let dir = roaming_app_data()
-        .join("Claude")
-        .join("Local Storage")
-        .join("leveldb");
-    let mut files = match fs::read_dir(dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                let path = entry.path();
-                let ext = path.extension().and_then(|value| value.to_str())?;
-                if !matches!(ext, "ldb" | "log") {
-                    return None;
-                }
-                let modified = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|metadata| metadata.modified().ok())
-                    .unwrap_or(UNIX_EPOCH);
-                Some((modified, path))
-            })
-            .collect::<Vec<_>>(),
-        Err(_) => return None,
-    };
-    files.sort_by(|left, right| right.0.cmp(&left.0));
-
-    for (_, path) in files {
-        let Ok(raw) = fs::read(&path) else {
-            continue;
-        };
-        let text = String::from_utf8_lossy(&raw);
-        if let Some(value) = parser(&text) {
-            return Some(value);
-        }
-    }
-    None
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn parse_sticky_model_selector_text(raw: &str) -> Option<String> {
-    let mut model = None;
-    for marker in [
-        "sticky-model-selector",
-        "ticky-model-selector",
-        "sticky-model-",
-    ] {
-        let mut offset = 0usize;
-        while let Some(index) = raw[offset..].find(marker) {
-            let start = offset + index + marker.len();
-            let end = (start + 512).min(raw.len());
-            if let Some(candidate) = extract_first_model_id(&raw[start..end]) {
-                model = Some(append_desktop_thinking_labels(candidate, &raw[start..end]));
-            }
-            offset = start;
-        }
-    }
-    model
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn parse_cowork_model_selector_text(raw: &str) -> Option<String> {
-    let mut model = None;
-    for marker in [
-        "cowork-sticky-model-selector",
-        "owork-sticky-model-selector",
-    ] {
-        let mut offset = 0usize;
-        while let Some(index) = raw[offset..].find(marker) {
-            let start = offset + index + marker.len();
-            let end = (start + 512).min(raw.len());
-            if let Some(candidate) = extract_first_model_id(&raw[start..end]) {
-                model = Some(append_desktop_thinking_labels(candidate, &raw[start..end]));
-            }
-            offset = start;
-        }
-    }
-    model
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn parse_desktop_effort_text(raw: &str) -> Option<String> {
-    let marker = "ccd-effort-level";
-    let mut offset = 0usize;
-    let mut effort = None;
-    while let Some(index) = raw[offset..].find(marker) {
-        let start = offset + index + marker.len();
-        let end = (start + 128).min(raw.len());
-        if let Some(value) = extract_effort_label(&raw[start..end].to_ascii_lowercase()) {
-            effort = Some(value);
-        }
-        offset = start;
-    }
-    effort
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn append_desktop_thinking_labels(mut model: String, raw: &str) -> String {
-    let lower = raw.to_ascii_lowercase();
-    append_unique_label(&mut model, lower.contains("adaptive"), "Adaptive");
-    append_unique_label(&mut model, lower.contains("extended"), "Extended");
-    model
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn extract_first_model_id(raw: &str) -> Option<String> {
-    let (start, needs_prefix) = find_model_token_start(raw)?;
-    let tail = &raw[start..];
-    let id = tail
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '[' | ']'))
-        .collect::<String>();
-    let id = if needs_prefix {
-        format!("claude-{id}")
-    } else {
-        id
-    };
-    format_model_name(&id)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn find_model_token_start(raw: &str) -> Option<(usize, bool)> {
-    let mut best: Option<(usize, bool)> = None;
-    for (needle, needs_prefix) in [
-        ("claude-", false),
-        ("opus-", true),
-        ("sonnet-", true),
-        ("haiku-", true),
-        ("fable-", true),
-    ] {
-        if let Some(index) = raw.find(needle) {
-            if best
-                .as_ref()
-                .map(|(best_index, _)| index < *best_index)
-                .unwrap_or(true)
-            {
-                best = Some((index, needs_prefix));
-            }
-        }
-    }
-    best
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn read_latest_local_agent_model() -> Option<String> {
-    let root = roaming_app_data()
-        .join("Claude")
-        .join("local-agent-mode-sessions");
-    let mut stack = vec![root];
-    let mut best: Option<(u64, String)> = None;
-    let mut visited = 0usize;
-
-    while let Some(dir) = stack.pop() {
-        visited += 1;
-        if visited > 10_000 {
-            break;
-        }
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-
-            let is_local_session = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(|name| name.starts_with("local_") && name.ends_with(".json"))
-                .unwrap_or(false);
-            if !is_local_session {
-                continue;
-            }
-
-            let Ok(raw) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Some(model) = desktop_model_from_local_agent_session(&raw) else {
-                continue;
-            };
-            let score = local_agent_session_timestamp(&raw).unwrap_or_else(|| {
-                entry
-                    .metadata()
-                    .ok()
-                    .and_then(|metadata| metadata.modified().ok())
-                    .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_millis() as u64)
-                    .unwrap_or(0)
-            });
-            if best
-                .as_ref()
-                .map(|(best_score, _)| score > *best_score)
-                .unwrap_or(true)
-            {
-                best = Some((score, model));
-            }
-        }
-    }
-
-    best.map(|(_, model)| model)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn desktop_model_from_local_agent_session(raw: &str) -> Option<String> {
-    serde_json::from_str::<Value>(raw)
-        .ok()?
-        .get("model")
-        .and_then(Value::as_str)
-        .and_then(format_model_name)
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn local_agent_session_timestamp(raw: &str) -> Option<u64> {
-    let value: Value = serde_json::from_str(raw).ok()?;
-    value
-        .get("lastActivityAt")
-        .or_else(|| value.get("createdAt"))
-        .and_then(Value::as_u64)
 }
 
 #[cfg(any(windows, test))]
@@ -658,65 +401,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_macos_desktop_model_sources() {
+    fn prefers_session_model_unless_model_button_seen() {
+        let session = SessionInfo {
+            file: std::path::PathBuf::from("session.jsonl"),
+            started_at_ms: None,
+            model: Some("Claude Opus 5.5".into()),
+            cwd: None,
+        };
+        // A loose UI match in the Code tab loses to the session log.
+        let loose = DesktopInfo {
+            mode: Some("Code".into()),
+            model: Some("Claude Fable 5.1".into()),
+            effort: Some("High".into()),
+            ..DesktopInfo::default()
+        };
         assert_eq!(
-            parse_sticky_model_selector_text(
-                "\0_https://claude.ai\0sticky-model-selector\0claude-opus-4-7[1m]\0"
-            )
-            .as_deref(),
-            Some("Claude Opus 4.7 (1M)")
+            detect_desktop_model(&loose, Some(&session)).as_deref(),
+            Some("Claude Opus 5.5 | High")
         );
+        // The composer's "Model:" button wins.
+        let explicit = DesktopInfo {
+            model_explicit: true,
+            ..loose.clone()
+        };
         assert_eq!(
-            parse_sticky_model_selector_text(
-                "\0sticky-model-selector\0claude-sonnet-4-6\0_https://claude.ai"
-            )
-            .as_deref(),
-            Some("Claude Sonnet 4.6")
-        );
-        assert_eq!(
-            parse_sticky_model_selector_text("en-US\0ticky-model-selector\0claude-opus-4-7\0")
-                .as_deref(),
-            Some("Claude Opus 4.7")
-        );
-        assert_eq!(
-            parse_sticky_model_selector_text(
-                "sticky-model-\u{001d}or\u{0001}P-sonnet-4-6\u{0014}\u{0015}default\u{0009}opus-4-7"
-            )
-            .as_deref(),
-            Some("Claude Sonnet 4.6")
-        );
-        assert_eq!(
-            parse_sticky_model_selector_text("sticky-model-selector\0claude-opus-4-7\0Adaptive")
-                .as_deref(),
-            Some("Claude Opus 4.7 | Adaptive")
-        );
-        assert_eq!(
-            parse_sticky_model_selector_text("sticky-model-selector\0claude-opus-4-7\0Extended")
-                .as_deref(),
-            Some("Claude Opus 4.7 | Extended")
-        );
-        assert_eq!(
-            parse_cowork_model_selector_text(
-                "cowork-sticky-model-selector\u{0001}c\u{0005}0h-opus-4-7"
-            )
-            .as_deref(),
-            Some("Claude Opus 4.7")
-        );
-        assert_eq!(
-            parse_desktop_effort_text("ccd-effort-level\u{0007}\u{0001}medium").as_deref(),
-            Some("Medium")
-        );
-        assert_eq!(
-            desktop_model_from_local_agent_session(
-                r#"{"model":"claude-sonnet-4-6","title":"Organize files"}"#
-            )
-            .as_deref(),
-            Some("Claude Sonnet 4.6")
+            detect_desktop_model(&explicit, Some(&session)).as_deref(),
+            Some("Claude Fable 5.1 | High")
         );
     }
 
     #[test]
-    fn maps_current_macos_desktop_modes() {
+    fn maps_desktop_sidebar_modes() {
         assert_eq!(map_desktop_mode("chat").as_deref(), Some("Chat"));
         assert_eq!(map_desktop_mode("cowork").as_deref(), Some("Cowork"));
         assert_eq!(map_desktop_mode("task").as_deref(), Some("Cowork"));

@@ -189,12 +189,19 @@ pub(super) fn effort_label(raw: &str) -> Option<String> {
 #[cfg(any(windows, test))]
 pub(super) fn parse_desktop_model_name(raw: &str) -> Option<DesktopModelCandidate> {
     let value = raw.trim();
-    if value.is_empty() {
+    // Model labels never carry a percentage; usage rows do ("Weekly · Fable 0%").
+    if value.is_empty() || value.contains('%') {
         return None;
     }
 
     let lower = value.to_ascii_lowercase();
-    let model = if lower.starts_with("claude-") || lower.contains("claude-opus-") {
+    // A "claude-…" label only counts as a model id when it names a family:
+    // the Desktop sidebar lists projects such as "claude-rpc", which would
+    // otherwise be displayed verbatim as the model.
+    let names_family = ["fable", "opus", "sonnet", "haiku"]
+        .iter()
+        .any(|family| lower.contains(family));
+    let model = if names_family && lower.contains("claude-") {
         format_model_name(value)?
     } else if lower.contains("opus plan") {
         "Opus Plan / Sonnet".into()
@@ -286,6 +293,10 @@ pub(super) fn extract_model_version(value: &str, family: &str) -> Option<String>
             // A bare number is a major-only version ("Opus 5"); anything longer
             // than two digits is a snapshot date, not a version.
             if !normalized.contains('.') && normalized.len() > 2 {
+                continue;
+            }
+            // No model family has a major version 0.
+            if normalized.starts_with('0') {
                 continue;
             }
             return Some(normalized.trim_end_matches('.').to_string());
@@ -437,6 +448,18 @@ mod tests {
         }
         assert_eq!(
             parse_desktop_model_name("Opus").map(|model| model.model),
+            Some("Claude Opus 5.5".into())
+        );
+        // A project named "claude-…" in the Desktop sidebar is not a model.
+        // Usage rows are not models, and version 0 does not exist.
+        assert!(parse_desktop_model_name("Weekly - Fable 0%").is_none());
+        assert_eq!(
+            parse_desktop_model_name("Fable 0").map(|model| model.model),
+            Some("Claude Fable 5.1".into())
+        );
+        assert!(parse_desktop_model_name("claude-rpc").is_none());
+        assert_eq!(
+            parse_desktop_model_name("claude-opus-5-5").map(|model| model.model),
             Some("Claude Opus 5.5".into())
         );
     }

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alerts;
 mod config;
 mod daemon;
 
@@ -8,7 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -18,12 +19,12 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Default)]
 struct DaemonState {
     running: Arc<Mutex<bool>>,
-    error: Mutex<Option<String>>,
     stop: Arc<AtomicBool>,
     force_refresh: Arc<AtomicBool>,
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -32,6 +33,8 @@ struct DaemonState {
 #[derive(Default)]
 struct UpdateState {
     available: Mutex<Option<UpdateInfo>>,
+    // Last failed install started from the tray, shown on the Updates item.
+    last_error: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,18 +49,18 @@ struct UpdateInfo {
 struct TrayInfo {
     dnd: bool,
     start_on_windows: bool,
-    startup_label: String,
     rpc_mode: String,
     update_version: Option<String>,
+    update_error: Option<String>,
     app_version: String,
+    pause_until_ms: u64,
+    language: String,
 }
 
 #[cfg(windows)]
 const STARTUP_REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
 const STARTUP_REG_VALUE: &str = "Claude RPC";
-#[cfg(target_os = "macos")]
-const MACOS_LAUNCH_AGENT_LABEL: &str = "eu.stealthylabs.claude-rpc";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,21 +68,18 @@ struct ClaudeStatus {
     claude_line: String,
     model_line: String,
     limits_line: Option<String>,
+    limits: Value,
+    // Why nothing is published ("private", "chat"), sessions count, and the
+    // 5-hour usage history for the tray chart.
+    hidden_reason: Option<String>,
+    sessions: u64,
+    history_5h: Value,
     provider_line: String,
     discord_line: String,
     preview_header: Option<String>,
     preview_primary: Option<String>,
     preview_secondary: Option<String>,
     preview_tertiary: Option<String>,
-    daemon_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DaemonStatus {
-    running: bool,
-    pid: Option<u32>,
-    error: Option<String>,
 }
 
 #[tauri::command]
@@ -95,12 +95,11 @@ fn save_config(config: ClaudeConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, String> {
+fn load_status() -> Result<ClaudeStatus, String> {
     let value = fs::read_to_string(status_path()?)
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(raw.trim_start_matches('\u{feff}')).ok())
         .unwrap_or(Value::Null);
-    let daemon = read_daemon_status(&state);
 
     Ok(ClaudeStatus {
         claude_line: value
@@ -117,6 +116,19 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
             .get("limitsLine")
             .and_then(Value::as_str)
             .map(str::to_string),
+        limits: value
+            .get("limits")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        hidden_reason: value
+            .get("hiddenReason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        sessions: value.get("sessions").and_then(Value::as_u64).unwrap_or(0),
+        history_5h: value
+            .get("history5h")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
         provider_line: value
             .get("providerLine")
             .and_then(Value::as_str)
@@ -143,17 +155,13 @@ fn load_status(state: tauri::State<'_, DaemonState>) -> Result<ClaudeStatus, Str
             .get("previewTertiary")
             .and_then(Value::as_str)
             .map(str::to_string),
-        daemon_error: daemon.error,
     })
 }
 
+// Settings call this on open: it restarts the daemon thread if it has exited.
 #[tauri::command]
-fn start_daemon(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, DaemonState>,
-) -> Result<DaemonStatus, String> {
-    start_daemon_inner(&app, &state);
-    Ok(read_daemon_status(&state))
+fn start_daemon(state: tauri::State<'_, DaemonState>) {
+    start_daemon_inner(&state);
 }
 
 #[tauri::command]
@@ -167,25 +175,7 @@ fn close_settings(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn refresh_limits(state: tauri::State<'_, DaemonState>) -> Result<(), String> {
     state.force_refresh.store(true, Ordering::SeqCst);
-    open_url("https://claude.ai/settings/usage")
-}
-
-fn open_url(url: &str) -> Result<(), String> {
-    let mut command = if cfg!(target_os = "macos") {
-        let mut command = std::process::Command::new("open");
-        command.arg(url);
-        command
-    } else if cfg!(windows) {
-        let mut command = std::process::Command::new("explorer.exe");
-        command.arg(url);
-        command
-    } else {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-
-    command.spawn().map(|_| ()).map_err(|err| err.to_string())
+    Ok(())
 }
 
 async fn fetch_update(app: &tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
@@ -247,14 +237,31 @@ fn read_tray_info(app: &tauri::AppHandle) -> TrayInfo {
         .expect("update state mutex poisoned")
         .as_ref()
         .map(|info| info.version.clone());
+    let update_error = app
+        .state::<UpdateState>()
+        .last_error
+        .lock()
+        .expect("update state mutex poisoned")
+        .clone();
     TrayInfo {
         dnd: config.dnd,
         start_on_windows: is_start_on_windows_enabled(),
-        startup_label: startup_menu_label().to_string(),
         rpc_mode: config.rpc_mode,
         update_version,
+        update_error,
         app_version: app.package_info().version.to_string(),
+        pause_until_ms: config.pause_until_ms,
+        language: config.language,
     }
+}
+
+#[tauri::command]
+async fn diagnostic(app: tauri::AppHandle) -> Result<String, String> {
+    let version = app.package_info().version.to_string();
+    let report = tauri::async_runtime::spawn_blocking(daemon::diagnostic_report)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(format!("Claude RPC v{version}\n{report}"))
 }
 
 #[tauri::command]
@@ -275,17 +282,44 @@ async fn tray_action(app: tauri::AppHandle, action: String) -> Result<TrayInfo, 
             hide_tray();
             show_settings(&app);
         }
+        // "Always" in the tray pause row: permanent DND replaces a timed pause.
         "dnd" => {
-            update_config(|config| config.dnd = !config.dnd)?;
+            update_config(|config| {
+                config.dnd = !config.dnd;
+                config.pause_until_ms = 0;
+            })?;
         }
         "startup" => {
             set_start_on_windows(!is_start_on_windows_enabled())?;
+        }
+        "resume" => {
+            update_config(|config| {
+                config.pause_until_ms = 0;
+                config.dnd = false;
+            })?;
+        }
+        // "pause:<unix ms>": tray.js computes the end time in local time
+        // (30 min, 1 hour, next midnight); capped at 48 hours.
+        action if action.starts_with("pause:") => {
+            let until = action["pause:".len()..]
+                .parse::<u64>()
+                .map_err(|_| format!("invalid pause: {action}"))?;
+            let now = daemon::now_ms();
+            let until = until.clamp(now, now + 48 * 60 * 60 * 1000);
+            update_config(|config| {
+                config.pause_until_ms = until;
+                config.dnd = false;
+            })?;
         }
         "mode_playing" => set_mode("playing")?,
         "mode_watching" => set_mode("watching")?,
         "mode_listening" => set_mode("listening")?,
         "mode_competing" => set_mode("competing")?,
         "update" => {
+            *app.state::<UpdateState>()
+                .last_error
+                .lock()
+                .expect("update state mutex poisoned") = None;
             let pending = app
                 .state::<UpdateState>()
                 .available
@@ -296,7 +330,13 @@ async fn tray_action(app: tauri::AppHandle, action: String) -> Result<TrayInfo, 
                 hide_tray();
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = download_and_install(&handle).await;
+                    if let Err(err) = download_and_install(&handle).await {
+                        *handle
+                            .state::<UpdateState>()
+                            .last_error
+                            .lock()
+                            .expect("update state mutex poisoned") = Some(err);
+                    }
                 });
             } else {
                 let info = fetch_update(&app).await?;
@@ -326,6 +366,7 @@ fn main() {
             show_settings(app);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(DaemonState::default())
         .manage(UpdateState::default())
         .invoke_handler(tauri::generate_handler![
@@ -339,14 +380,16 @@ fn main() {
             pending_update,
             install_update,
             tray_state,
-            tray_action
+            tray_action,
+            tray_fit,
+            diagnostic
         ])
         .setup(|app| {
-            let handle = app.handle().clone();
             let state = app.state::<DaemonState>();
-            start_daemon_inner(&handle, &state);
+            start_daemon_inner(&state);
             create_tray(app)?;
             spawn_update_check(app.handle().clone());
+            spawn_status_watcher(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -365,8 +408,48 @@ fn spawn_update_check(app: tauri::AppHandle) {
     });
 }
 
+const TRAY_ID: &str = "main";
+
+// Every 2 s: refresh the tray icon tooltip from status.txt and raise the
+// 5-hour usage notifications. Runs beside the daemon; reads files only.
+fn spawn_status_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut alerts = alerts::AlertState::default();
+        let mut last_tooltip = String::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(status) = status_path()
+                .ok()
+                .and_then(|path| fs::read_to_string(path).ok())
+                .and_then(|raw| {
+                    serde_json::from_str::<Value>(raw.trim_start_matches('\u{feff}')).ok()
+                })
+            else {
+                continue;
+            };
+            let config = read_config().unwrap_or_default();
+            let french = alerts::is_french(&config.language);
+
+            let tooltip = alerts::tray_tooltip(&status, french);
+            if tooltip != last_tooltip {
+                if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                    let _ = tray.set_tooltip(Some(&tooltip));
+                }
+                last_tooltip = tooltip;
+            }
+
+            if let Some(percent) = alerts::five_hour_percent(&status) {
+                for alert in alerts.update(percent, &config) {
+                    let (title, body) = alerts::alert_text(alert, percent, french);
+                    let _ = app.notification().builder().title(title).body(body).show();
+                }
+            }
+        }
+    });
+}
+
 fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Claude RPC")
         .icon(app.default_window_icon().unwrap().clone())
         .on_tray_icon_event(|tray, event| {
@@ -389,10 +472,35 @@ fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-// Logical size of the custom tray menu window; tray.css lays the menu out with
-// fixed item heights so the content always fits this box, bottom-anchored.
-const TRAY_MENU_WIDTH: f64 = 260.0;
-const TRAY_MENU_HEIGHT: f64 = 416.0;
+// Logical size of the custom tray menu window. It opens at the maximum height;
+// tray.js then reports the menu's real height through `tray_fit`, which shrinks
+// the window upward from its bottom edge so no transparent area catches clicks.
+const TRAY_MENU_WIDTH: f64 = 316.0;
+const TRAY_MENU_HEIGHT: f64 = 640.0;
+
+#[tauri::command]
+fn tray_fit(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window("tray")
+        .ok_or_else(|| "tray window missing".to_string())?;
+    let scale = window.scale_factor().map_err(|err| err.to_string())?;
+    let position = window.outer_position().map_err(|err| err.to_string())?;
+    let size = window.outer_size().map_err(|err| err.to_string())?;
+    let height = (height.clamp(120.0, TRAY_MENU_HEIGHT) * scale).round() as u32;
+    if height == size.height {
+        return Ok(());
+    }
+    let bottom = position.y + size.height as i32;
+    window
+        .set_size(tauri::PhysicalSize::new(size.width, height))
+        .map_err(|err| err.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(
+            position.x,
+            bottom - height as i32,
+        ))
+        .map_err(|err| err.to_string())
+}
 
 fn show_tray_menu(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
     let window = match app.get_webview_window("tray") {
@@ -467,16 +575,6 @@ fn show_settings(app: &tauri::AppHandle) {
 }
 
 #[cfg(windows)]
-fn startup_menu_label() -> &'static str {
-    "Start on Windows"
-}
-
-#[cfg(not(windows))]
-fn startup_menu_label() -> &'static str {
-    "Start at Login"
-}
-
-#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[cfg(windows)]
@@ -490,14 +588,7 @@ fn is_start_on_windows_enabled() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "macos")]
-fn is_start_on_windows_enabled() -> bool {
-    launch_agent_path()
-        .map(|path| path.exists())
-        .unwrap_or(false)
-}
-
-#[cfg(all(not(windows), not(target_os = "macos")))]
+#[cfg(not(windows))]
 fn is_start_on_windows_enabled() -> bool {
     false
 }
@@ -525,43 +616,7 @@ fn set_start_on_windows(enabled: bool) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn set_start_on_windows(enabled: bool) -> Result<(), String> {
-    let path = launch_agent_path()?;
-    if enabled {
-        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let exe = xml_escape(&exe.to_string_lossy());
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>{MACOS_LAUNCH_AGENT_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>{exe}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-"#
-        );
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-        }
-        fs::write(path, plist).map_err(|err| err.to_string())
-    } else {
-        match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err.to_string()),
-        }
-    }
-}
-
-#[cfg(all(not(windows), not(target_os = "macos")))]
+#[cfg(not(windows))]
 fn set_start_on_windows(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
@@ -585,26 +640,7 @@ fn run_reg(args: &[&str]) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn launch_agent_path() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
-    Ok(Path::new(&home)
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{MACOS_LAUNCH_AGENT_LABEL}.plist")))
-}
-
-#[cfg(target_os = "macos")]
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn start_daemon_inner(_app: &tauri::AppHandle, state: &DaemonState) {
+fn start_daemon_inner(state: &DaemonState) {
     let mut running = state.running.lock().expect("daemon state mutex poisoned");
     if *running {
         return;
@@ -612,7 +648,6 @@ fn start_daemon_inner(_app: &tauri::AppHandle, state: &DaemonState) {
 
     state.stop.store(false, Ordering::SeqCst);
     state.force_refresh.store(false, Ordering::SeqCst);
-    *state.error.lock().expect("daemon error mutex poisoned") = None;
     *running = true;
 
     let stop = Arc::clone(&state.stop);
@@ -650,25 +685,6 @@ fn stop_daemon(state: &DaemonState) {
     }
 }
 
-fn read_daemon_status(state: &DaemonState) -> DaemonStatus {
-    let running = *state.running.lock().expect("daemon state mutex poisoned");
-    let error = state
-        .error
-        .lock()
-        .expect("daemon error mutex poisoned")
-        .clone();
-
-    DaemonStatus {
-        running,
-        pid: if running {
-            Some(std::process::id())
-        } else {
-            None
-        },
-        error,
-    }
-}
-
 fn update_config<F>(mutator: F) -> Result<ClaudeConfig, String>
 where
     F: FnOnce(&mut ClaudeConfig),
@@ -681,23 +697,13 @@ where
 }
 
 fn read_config() -> Result<ClaudeConfig, String> {
-    match fs::read_to_string(config_path()?) {
-        Ok(raw) => Ok(config::normalize_config(
-            serde_json::from_str::<ClaudeConfig>(raw.trim_start_matches('\u{feff}'))
-                .unwrap_or_default(),
-        )),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ClaudeConfig::default()),
-        Err(err) => Err(err.to_string()),
-    }
+    // An unparsable file still opens the settings with defaults so it can be
+    // repaired from the UI; the daemon keeps its last good copy meanwhile.
+    Ok(config::load_config(&config_path()?).unwrap_or_default())
 }
 
 fn write_config(config: &ClaudeConfig) -> Result<(), String> {
-    let path = config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(config).map_err(|err| err.to_string())?;
-    fs::write(path, json).map_err(|err| err.to_string())
+    config::write_config_atomic(&config_path()?, config)
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -709,33 +715,5 @@ fn status_path() -> Result<PathBuf, String> {
 }
 
 fn app_dir() -> Result<PathBuf, String> {
-    if let Ok(path) = std::env::var("CLAUDE_RPC_DIR") {
-        return Ok(expand_home(&path));
-    }
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        return Ok(Path::new(&home).join(".claude-rpc"));
-    }
-    std::env::current_dir()
-        .map(|path| path.join(".claude-rpc"))
-        .map_err(|err| err.to_string())
-}
-
-fn expand_home(value: &str) -> PathBuf {
-    if value == "~" {
-        return home_dir();
-    }
-    if let Some(rest) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        return home_dir().join(rest);
-    }
-    PathBuf::from(value)
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    Ok(daemon::app_dir())
 }

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use super::{
     app_dir, claude_dir, normalize_ui_label, now_ms, truncate, write_status, StateMachine,
@@ -259,7 +260,47 @@ pub(crate) fn current_limits(
         write_limits_cache(now, &machine.cached_limits);
     }
 
-    fresh_limit_entries(&machine.cached_limits, now)
+    let fresh = fresh_limit_entries(&machine.cached_limits, now);
+    record_usage_history(machine, &fresh, now);
+    fresh
+}
+
+const HISTORY_SAMPLE_MS: u64 = 5 * 60 * 1_000;
+const HISTORY_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
+
+// Keeps the last 24 h of the 5-hour bucket (one sample per 5 minutes) in
+// usage-history.json, so the tray chart survives restarts. Local only.
+pub(crate) fn record_usage_history(
+    machine: &mut StateMachine,
+    limits: &[UsageLimitEntry],
+    now: u64,
+) {
+    let path = app_dir().join("usage-history.json");
+    if !machine.history_loaded {
+        machine.history_loaded = true;
+        machine.history_5h = fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Vec<[u64; 2]>>(&raw).ok())
+            .unwrap_or_default();
+    }
+    let Some(entry) = limits.iter().find(|entry| entry.label == "5h") else {
+        return;
+    };
+    let last = machine
+        .history_5h
+        .last()
+        .map(|sample| sample[0])
+        .unwrap_or(0);
+    if now.saturating_sub(last) < HISTORY_SAMPLE_MS {
+        return;
+    }
+    machine
+        .history_5h
+        .push([now, u64::from(entry.used_percent)]);
+    machine
+        .history_5h
+        .retain(|sample| now.saturating_sub(sample[0]) <= HISTORY_WINDOW_MS);
+    write_status(&path, &json!(machine.history_5h));
 }
 
 // Drop buckets not refreshed within LIMITS_DISPLAY_TTL_MS so an individual stale
@@ -283,6 +324,25 @@ pub(crate) fn maybe_fetch_oauth_limits(
     machine: &mut StateMachine,
     now: u64,
 ) -> Option<Vec<UsageLimitEntry>> {
+    // The HTTP call runs on its own thread (up to 8 s): the daemon loop only
+    // collects the result, so presence, status and Quit never wait on it.
+    let polled = machine.oauth_inflight.as_ref().map(Receiver::try_recv);
+    match polled {
+        Some(Ok(result)) => {
+            machine.oauth_inflight = None;
+            return match result {
+                Ok(entries) => Some(entries),
+                Err(OAuthFetchError::RateLimited) => {
+                    machine.oauth_backoff_until_ms = now + OAUTH_USAGE_BACKOFF_MS;
+                    None
+                }
+                Err(_) => None,
+            };
+        }
+        Some(Err(TryRecvError::Empty)) => return None,
+        Some(Err(TryRecvError::Disconnected)) => machine.oauth_inflight = None,
+        None => {}
+    }
     if now < machine.oauth_backoff_until_ms {
         machine.pending_activity_refresh = false;
         return None;
@@ -299,14 +359,12 @@ pub(crate) fn maybe_fetch_oauth_limits(
     }
     machine.oauth_last_attempt_ms = now;
     machine.pending_activity_refresh = false;
-    match fetch_oauth_usage() {
-        Ok(entries) => Some(entries),
-        Err(OAuthFetchError::RateLimited) => {
-            machine.oauth_backoff_until_ms = now + OAUTH_USAGE_BACKOFF_MS;
-            None
-        }
-        Err(_) => None,
-    }
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(fetch_oauth_usage());
+    });
+    machine.oauth_inflight = Some(receiver);
+    None
 }
 
 pub(crate) enum OAuthFetchError {
@@ -403,13 +461,19 @@ pub(crate) fn extract_oauth_usage_percent(bucket: &Value) -> Option<u8> {
     if let Some(raw) = bucket.get("utilization").and_then(Value::as_f64) {
         return Some(raw.round().clamp(0.0, 100.0) as u8);
     }
-    for key in ["percent_used", "used_percent", "usage", "value"] {
-        let Some(raw) = bucket.get(key).and_then(Value::as_f64) else {
-            continue;
-        };
-        // Auto-detect: ratio (0..1) gets multiplied; percentage (>1.5) used directly
-        let pct = if raw <= 1.5 { raw * 100.0 } else { raw };
-        return Some(pct.round().clamp(0.0, 100.0) as u8);
+    // Keys named "percent" are percentages, so 1 means 1%, not 100%.
+    for key in ["percent_used", "used_percent", "percent"] {
+        if let Some(raw) = bucket.get(key).and_then(Value::as_f64) {
+            return Some(raw.round().clamp(0.0, 100.0) as u8);
+        }
+    }
+    // Generic keys may carry a 0..1 ratio; only a value strictly below 1 is
+    // read as one, so an exact 1 is read as 1%.
+    for key in ["usage", "value"] {
+        if let Some(raw) = bucket.get(key).and_then(Value::as_f64) {
+            let pct = if raw < 1.0 { raw * 100.0 } else { raw };
+            return Some(pct.round().clamp(0.0, 100.0) as u8);
+        }
     }
     None
 }
@@ -503,6 +567,50 @@ pub(crate) fn sort_limit_entries(entries: &mut [UsageLimitEntry]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expires_stale_limit_buckets() {
+        let entry = |label: &str, updated_at_ms| UsageLimitEntry {
+            label: label.into(),
+            used_percent: 10,
+            reset: None,
+            updated_at_ms,
+        };
+        let now = 10 * LIMITS_DISPLAY_TTL_MS;
+        let fresh = fresh_limit_entries(
+            &[
+                entry("5h", now - 1_000),
+                entry("All", now - LIMITS_DISPLAY_TTL_MS - 1),
+            ],
+            now,
+        );
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].label, "5h");
+    }
+
+    #[test]
+    fn reads_fallback_usage_percent_keys() {
+        // A percentage key of 1 is 1%, never 100%.
+        assert_eq!(
+            extract_oauth_usage_percent(&json!({"percent_used": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            extract_oauth_usage_percent(&json!({"percent": 42.4})),
+            Some(42)
+        );
+        // Generic keys accept a 0..1 ratio.
+        assert_eq!(
+            extract_oauth_usage_percent(&json!({"usage": 0.25})),
+            Some(25)
+        );
+        assert_eq!(extract_oauth_usage_percent(&json!({"value": 1})), Some(1));
+        assert_eq!(
+            extract_oauth_usage_percent(&json!({"utilization": 150.0})),
+            Some(100)
+        );
+        assert_eq!(extract_oauth_usage_percent(&json!({})), None);
+    }
 
     #[test]
     fn parses_oauth_fable_weekly_limit() {

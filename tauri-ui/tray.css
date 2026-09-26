@@ -1,3 +1,12 @@
+/* Inter is bundled (fonts/, SIL OFL): the CSP only allows the app's own files. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/InterVariable.woff2') format('woff2');
+}
+
 :root {
   color-scheme: dark;
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -14,6 +23,11 @@
   --danger: #e5484d;
   --danger-weak: rgba(229, 72, 77, 0.14);
   --knob: #f5f4ef;
+  --card: #252523;
+  --track: #333331;
+  --ok: #4cb782;
+  --warn: #d9a441;
+  --warn-weak: rgba(217, 164, 65, 0.14);
 
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -34,6 +48,11 @@ body[data-theme="light"] {
   --danger: #d13438;
   --danger-weak: rgba(209, 52, 56, 0.12);
   --knob: #ffffff;
+  --card: #f1efe7;
+  --track: #e2dfd4;
+  --ok: #2e9e68;
+  --warn: #9a6b0c;
+  --warn-weak: rgba(154, 107, 12, 0.12);
 }
 
 * {
@@ -165,8 +184,7 @@ body {
 }
 
 .item:hover svg,
-.item.on svg,
-.item.checked svg {
+.item.on svg {
   color: var(--accent);
 }
 
@@ -209,41 +227,280 @@ body {
   transform: translateX(11px);
 }
 
-/* Radio dot (activity modes) */
-.radio {
-  position: relative;
-  width: 14px;
-  height: 14px;
+/* Status card */
+.card {
+  margin: 2px 2px 6px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.discord {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.discord b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
   flex-shrink: 0;
   border-radius: 50%;
-  border: 1.5px solid var(--line-strong);
-  transition: border-color 0.15s var(--ease-smooth);
+  background: var(--line-strong);
 }
 
-.item.checked .radio {
-  border-color: var(--accent);
+.dot.ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
 }
 
-.item.checked .radio::after {
-  content: '';
-  position: absolute;
-  inset: 2.5px;
-  border-radius: 50%;
+.model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.model > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.context {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.limits {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.limits:empty {
+  display: none;
+}
+
+.limit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+}
+
+.limit-head small {
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.limit-head > span:last-child {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
   background: var(--accent);
-  animation: dot 0.18s var(--ease-bounce);
+  transition: width 0.3s var(--ease-smooth);
 }
 
-@keyframes dot {
-  from {
-    transform: scale(0);
-  }
-  to {
-    transform: scale(1);
-  }
+.bar i.warn {
+  background: var(--warn);
 }
 
-.item.checked {
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--warn-weak);
+  color: var(--warn);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.alert[hidden] {
+  display: none;
+}
+
+.alert svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: 6px;
+}
+
+.spark-area {
+  fill: var(--accent-weak);
+}
+
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Pause row: timed pauses plus "Always" (Do Not Disturb) */
+.pause-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.pause-head svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.pause-head span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resume {
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font: 600 11px var(--font-sans);
+  cursor: pointer;
+}
+
+.resume[hidden] {
+  display: none;
+}
+
+.pause-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 6px 6px 35px;
+}
+
+.pause-chip {
+  padding: 5px 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 11px var(--font-sans);
+  cursor: pointer;
+  transition: background-color 0.12s var(--ease-smooth), color 0.12s var(--ease-smooth);
+}
+
+.pause-chip:hover {
+  background: var(--hover);
   color: var(--text);
+}
+
+.pause-chip.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Activity modes: one segmented row */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 4px 4px;
+}
+
+.seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 0 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: background-color 0.12s var(--ease-smooth), color 0.12s var(--ease-smooth);
+}
+
+.seg svg {
+  width: 16px;
+  height: 16px;
+}
+
+.seg:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.seg.checked {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
 }
 
 /* Update */
@@ -271,4 +528,9 @@ body {
 
 .item.danger:hover svg {
   color: var(--danger);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }

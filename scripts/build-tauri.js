@@ -7,12 +7,11 @@ const { spawnSync } = require('node:child_process');
 const ROOT = path.resolve(__dirname, '..');
 
 function run(command, args) {
-  // Quote command on Windows to handle spaces in paths (e.g. C:\Program Files\nodejs\node.exe)
-  const cmd = process.platform === 'win32' ? `"${command}"` : command;
-  const res = spawnSync(cmd, args, {
+  // Quote the command to handle spaces in paths (e.g. C:\Program Files\nodejs\node.exe)
+  const res = spawnSync(`"${command}"`, args, {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    shell: true,
   });
   if (res.error) {
     console.error(`Failed to run ${command}: ${res.error.message}`);
@@ -25,16 +24,14 @@ function tauriBin() {
     ROOT,
     'node_modules',
     '.bin',
-    process.platform === 'win32' ? 'tauri.cmd' : 'tauri',
+    'tauri.cmd',
   );
 }
 
-if (process.platform === 'darwin') {
-  require('./build-tauri-macos');
-} else if (process.platform === 'win32') {
-  run(tauriBin(), ['build', '--bundles', 'nsis']);
-  run(process.execPath, [path.join(ROOT, 'scripts', 'export-tauri-binary.js')]);
-} else {
-  run(tauriBin(), ['build']);
-  run(process.execPath, [path.join(ROOT, 'scripts', 'export-tauri-binary.js')]);
+if (process.platform !== 'win32') {
+  console.error('Claude RPC only builds on Windows.');
+  process.exit(1);
 }
+
+run(tauriBin(), ['build', '--bundles', 'nsis']);
+run(process.execPath, [path.join(ROOT, 'scripts', 'export-tauri-binary.js')]);
