@@ -28,6 +28,8 @@ Claude RPC is now Windows only: macOS support has been removed.
 - The usage request runs in the background, so a slow answer no longer freezes Discord updates, the settings or Quit.
 
 ### Fixed
+- Conversation text containing "set model to" could be published as the model on Discord. Model and effort detection now require a complete local-command output record instead of matching ordinary user or assistant prose.
+- When private-project filters are configured, coding activity is now hidden until its project directory is known, instead of publishing when the directory cannot be read.
 - A half-written settings file could reset every setting to its default (DND off, everything shown). The file is now replaced in one step, and a file that cannot be read keeps the last good settings.
 - A fallback usage value of 1 could be shown as 100%.
 - In long Claude Desktop conversations the "Model:" button could be missed, which let other labels be taken for the model.

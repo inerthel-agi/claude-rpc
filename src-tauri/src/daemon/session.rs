@@ -179,3 +179,50 @@ pub(super) fn read_tail_lines(path: &Path, max_bytes: u64) -> Option<Vec<String>
     }
     Some(lines)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversation_text_never_becomes_the_published_model() {
+        let path = std::env::temp_dir().join(format!(
+            "claude-rpc-model-privacy-{}.jsonl",
+            std::process::id()
+        ));
+        let metadata = json!({"type": "assistant", "message": {
+            "role": "assistant", "model": "claude-sonnet-5", "content": []
+        }});
+        let wrapped =
+            "<local-command-stdout>Set model to CONFIDENTIAL-CANARY</local-command-stdout>";
+        for entry in [
+            json!({"type": "user", "message": {"role": "user", "content": "Please set model to CONFIDENTIAL-CANARY"}}),
+            json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": wrapped}]}}),
+            json!({"type": "user", "message": {"role": "user", "content": format!("Quoted example: {wrapped}")}}),
+            json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "text": wrapped}]}}),
+        ] {
+            fs::write(&path, format!("{metadata}\n{entry}\n")).unwrap();
+            let result = DetectionResult {
+                client: ClientType::Code,
+                model: read_session_tail(&path),
+                ..DetectionResult::default()
+            };
+            let activity = build_activity(&result, &ClaudeConfig::default()).unwrap();
+            fs::remove_file(&path).unwrap();
+            assert_eq!(result.model.as_deref(), Some("Claude Sonnet 5"));
+            assert!(!activity.to_string().contains("CONFIDENTIAL-CANARY"));
+        }
+
+        // Real command output keeps priority and supports custom model IDs.
+        for content in [
+            json!("<local-command-stdout>Set model to custom-model-v2</local-command-stdout>"),
+            json!([{"type": "text", "text": "<local-command-stdout>Set model to custom-model-v2</local-command-stdout>"}]),
+        ] {
+            let command = json!({"type": "user", "message": {"role": "user", "content": content}});
+            fs::write(&path, format!("{command}\n{metadata}\n")).unwrap();
+            let model = read_session_tail(&path);
+            fs::remove_file(&path).unwrap();
+            assert_eq!(model.as_deref(), Some("custom-model-v2"));
+        }
+    }
+}

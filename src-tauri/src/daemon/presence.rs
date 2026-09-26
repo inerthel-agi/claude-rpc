@@ -185,10 +185,12 @@ pub(super) fn hidden_reason(
     }
     let coding = result.client == ClientType::Code || result.mode.as_deref() == Some("Code");
     if coding
+        && !config.private_projects.is_empty()
         && result
             .project_dir
             .as_deref()
-            .is_some_and(|dir| is_private_project(dir, &config.private_projects))
+            // Do not publish until an enabled privacy filter can be evaluated.
+            .is_none_or(|dir| is_private_project(dir, &config.private_projects))
     {
         return Some("private");
     }
@@ -388,6 +390,26 @@ mod tests {
         assert_eq!(hidden_reason(&chat, &config), Some("chat"));
         assert_eq!(model_family(Some("Claude Fable 5.1 | High")), Some("fable"));
         assert_eq!(model_family(None), None);
+    }
+
+    #[test]
+    fn private_project_filter_hides_unknown_coding_directory() {
+        let config = ClaudeConfig {
+            private_projects: vec!["secret-app".into()],
+            ..ClaudeConfig::default()
+        };
+        for client in [ClientType::Code, ClientType::Desktop] {
+            let mut result = DetectionResult {
+                client,
+                mode: Some("Code".into()),
+                ..DetectionResult::default()
+            };
+            assert!(build_activity(&result, &config).is_none());
+            assert!(build_status(&result, None, &config)["previewHeader"].is_null());
+            assert!(build_activity(&result, &ClaudeConfig::default()).is_some());
+            result.project_dir = Some("D:/work/public-app".into());
+            assert!(build_activity(&result, &config).is_some());
+        }
     }
 
     #[test]

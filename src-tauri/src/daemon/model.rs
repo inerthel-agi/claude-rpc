@@ -143,30 +143,40 @@ pub(super) fn read_session_effort_override(session: Option<&SessionInfo>) -> Opt
 }
 
 pub(super) fn read_command_effort(entry: &Value) -> Option<String> {
+    read_local_command(entry, parse_command_effort_text)
+}
+
+fn read_local_command(entry: &Value, parse: fn(&str) -> Option<String>) -> Option<String> {
+    if entry.get("type").and_then(Value::as_str) != Some("user")
+        || entry.pointer("/message/role").and_then(Value::as_str) != Some("user")
+    {
+        return None;
+    }
     let content = entry.get("message")?.get("content")?;
     if let Some(text) = content.as_str() {
-        return parse_command_effort_text(text);
+        return parse(text);
     }
     content.as_array()?.iter().find_map(|item| {
-        item.get("text")
-            .and_then(Value::as_str)
-            .and_then(parse_command_effort_text)
+        if item.get("type").and_then(Value::as_str) != Some("text") {
+            return None;
+        }
+        item.get("text").and_then(Value::as_str).and_then(parse)
     })
 }
 
+fn local_command_stdout(text: &str) -> Option<&str> {
+    text.trim()
+        .strip_prefix("<local-command-stdout>")?
+        .strip_suffix("</local-command-stdout>")
+        .map(str::trim)
+}
+
 pub(super) fn parse_command_effort_text(text: &str) -> Option<String> {
-    // Only trust actual /effort command output, not assistant prose that may
-    // mention the phrase.
-    if !text.contains("command-stdout") {
-        return None;
-    }
-    let cleaned = strip_ansi(text)
-        .replace("<local-command-stdout>", " ")
-        .replace("</local-command-stdout>", " ");
+    let cleaned = strip_ansi(local_command_stdout(text)?);
     let marker = "set effort level to ";
     let lower = cleaned.to_ascii_lowercase();
-    let start = lower.find(marker)? + marker.len();
-    let rest = cleaned[start..].lines().next().unwrap_or_default();
+    lower.strip_prefix(marker)?;
+    let rest = cleaned[marker.len()..].lines().next().unwrap_or_default();
     let word = rest.split(['(', ':']).next().unwrap_or(rest).trim();
     effort_label(word)
 }
@@ -336,31 +346,16 @@ pub(super) fn extract_effort_label(lower: &str) -> Option<String> {
 }
 
 pub(super) fn read_command_model(entry: &Value) -> Option<String> {
-    let content = entry.get("message")?.get("content")?;
-    if let Some(text) = content.as_str() {
-        return parse_command_model_text(text);
-    }
-    content.as_array()?.iter().find_map(|item| {
-        item.get("text")
-            .and_then(Value::as_str)
-            .and_then(parse_command_model_text)
-    })
+    read_local_command(entry, parse_command_model_text)
 }
 
 pub(super) fn parse_command_model_text(text: &str) -> Option<String> {
-    let cleaned = strip_ansi(text)
-        .replace("<local-command-stdout>", " ")
-        .replace("</local-command-stdout>", " ")
-        .replace("<command-name>", " ")
-        .replace("</command-name>", " ")
-        .replace("<command-message>", " ")
-        .replace("</command-message>", " ")
-        .replace("<command-args>", " ")
-        .replace("</command-args>", " ");
+    // Conversation text is private, even when it quotes a /model command.
+    let cleaned = strip_ansi(local_command_stdout(text)?);
     let marker = "set model to ";
     let lower = cleaned.to_ascii_lowercase();
-    let start = lower.find(marker)? + marker.len();
-    let raw = cleaned[start..]
+    lower.strip_prefix(marker)?;
+    let raw = cleaned[marker.len()..]
         .lines()
         .next()
         .unwrap_or_default()
