@@ -102,10 +102,18 @@ fn is_background_helper(command: &str) -> bool {
     }
 
     // claude-mem keeps a stateless SDK worker alive without a user session.
-    // Keep quoted prompt text intact so mentioning these flags cannot hide a CLI.
+    let args = launch_args(command);
+    has_flag(&args, "--no-session-persistence")
+        && has_option(&args, "--input-format", "stream-json")
+}
+
+// Options of a command line, without the program and anything after "--".
+// Quoted prompt text stays one argument, so mentioning a flag in a prompt
+// cannot change how the process is classified.
+fn launch_args(command: &str) -> Vec<&str> {
     let mut quote = None;
     let mut escaped = false;
-    let mut args = command
+    command
         .split(|ch: char| {
             if escaped {
                 escaped = false;
@@ -121,18 +129,41 @@ fn is_background_helper(command: &str) -> bool {
         .filter(|arg| !arg.is_empty())
         .skip(1)
         .map(|arg| arg.trim_matches(['\'', '"']))
-        .take_while(|arg| *arg != "--");
-    let mut stateless = false;
-    let mut streaming_input = false;
-    while let Some(arg) = args.next() {
-        match arg {
-            "--no-session-persistence" => stateless = true,
-            "--input-format" => streaming_input = args.next() == Some("stream-json"),
-            "--input-format=stream-json" => streaming_input = true,
-            _ => {}
-        }
-    }
-    stateless && streaming_input
+        .take_while(|arg| *arg != "--")
+        .collect()
+}
+
+fn has_flag(args: &[&str], flag: &str) -> bool {
+    args.contains(&flag)
+}
+
+// "--name value" or "--name=value".
+fn has_option(args: &[&str], name: &str, value: &str) -> bool {
+    let joined = format!("{name}={value}");
+    args.iter()
+        .enumerate()
+        .any(|(i, arg)| *arg == joined || (*arg == name && args.get(i + 1) == Some(&value)))
+}
+
+// Claude Desktop's Code tab runs its bundled Claude Code from
+// %APPDATA%\Claude\claude-code\<version>\claude.exe.
+pub(super) fn is_desktop_code_session(process: &ProcessSnapshot) -> bool {
+    process
+        .executable_path
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .replace('\\', "/")
+        .contains("/appdata/roaming/claude/claude-code/")
+}
+
+// A Claude Code started by hand in a terminal. Desktop, IDE extensions and SDK
+// workers drive it through --output-format stream-json instead.
+pub(super) fn is_interactive_cli(process: &ProcessSnapshot) -> bool {
+    !is_desktop_code_session(process)
+        && !process.command_line.as_deref().is_some_and(|command| {
+            has_option(&launch_args(command), "--output-format", "stream-json")
+        })
 }
 
 #[cfg(windows)]
@@ -293,6 +324,49 @@ mod tests {
         process.command_line = Some(r#""C:\Program Files\Claude\Claude.exe""#.into());
         assert!(is_desktop_process(&process));
         assert!(!is_code_process(&process));
+    }
+
+    #[test]
+    fn separates_desktop_sessions_terminal_clis_and_workers() {
+        let process = |exe: &str, command: &str| ProcessSnapshot {
+            process_id: 1,
+            name: "claude.exe".into(),
+            executable_path: Some(exe.into()),
+            command_line: Some(command.into()),
+            creation_date_ms: None,
+        };
+        let bundled = r"C:\Users\test\AppData\Roaming\Claude\claude-code\2.1.281\claude.exe";
+        let native = r"C:\Users\test\.local\bin\claude.exe";
+
+        let desktop_tab = process(
+            bundled,
+            "claude.exe --output-format stream-json --verbose --input-format stream-json --effort medium",
+        );
+        assert!(is_code_process(&desktop_tab));
+        assert!(is_desktop_code_session(&desktop_tab));
+        assert!(!is_interactive_cli(&desktop_tab));
+
+        // IDE extensions and SDK workers (claude-mem under bun) stream JSON.
+        let worker = process(
+            native,
+            "claude.exe --output-format stream-json --verbose --input-format stream-json --model claude-sonnet-4-5",
+        );
+        assert!(is_code_process(&worker));
+        assert!(!is_desktop_code_session(&worker));
+        assert!(!is_interactive_cli(&worker));
+        let worker = process(native, "claude.exe --output-format=stream-json -p hi");
+        assert!(!is_interactive_cli(&worker));
+
+        for command in [
+            "claude.exe",
+            "claude.exe --resume",
+            "claude.exe -p \"explain --output-format stream-json\"",
+            "claude.exe --output-format json -p hi",
+        ] {
+            let cli = process(native, command);
+            assert!(is_interactive_cli(&cli), "{command}");
+            assert!(!is_desktop_code_session(&cli), "{command}");
+        }
     }
 
     #[test]

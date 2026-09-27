@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "claude_rpc_tray"
-version = "3.9.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",

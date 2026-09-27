@@ -165,7 +165,11 @@ impl DiscordIpc {
             let frame = self.read_frame()?;
             if frame.get("nonce").and_then(Value::as_str) == Some(nonce) {
                 if frame.get("evt").and_then(Value::as_str) == Some("ERROR") {
-                    return Err(std::io::Error::other("discord rpc error"));
+                    // Rejected payload, connection still healthy.
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "discord rpc error",
+                    ));
                 }
                 return Ok(());
             }

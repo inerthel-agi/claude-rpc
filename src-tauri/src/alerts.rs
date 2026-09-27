@@ -22,6 +22,17 @@ pub(crate) struct AlertState {
 
 impl AlertState {
     pub(crate) fn update(&mut self, percent: u8, config: &ClaudeConfig) -> Vec<Alert> {
+        // First reading after the app starts (login, restart after an update):
+        // note the thresholds already passed without notifying them again.
+        if self.last_percent.is_none() {
+            self.announced = match percent {
+                95.. => 95,
+                80.. => 80,
+                _ => 0,
+            };
+            self.last_percent = Some(percent);
+            return Vec::new();
+        }
         let mut alerts = Vec::new();
         // A drop of 15 points or more after real use means the window reset.
         if let Some(last) = self.last_percent {
@@ -168,7 +179,18 @@ mod tests {
             ..ClaudeConfig::default()
         };
         let mut state = AlertState::default();
+        assert!(state.update(40, &quiet).is_empty());
         assert!(state.update(82, &quiet).is_empty());
+    }
+
+    #[test]
+    fn does_not_repeat_alerts_after_a_restart() {
+        let config = ClaudeConfig::default();
+        let mut state = AlertState::default();
+        // The app starts while the session is already at 85%.
+        assert!(state.update(85, &config).is_empty());
+        assert!(state.update(86, &config).is_empty());
+        assert_eq!(state.update(96, &config), [Alert::Above95]);
     }
 
     #[test]

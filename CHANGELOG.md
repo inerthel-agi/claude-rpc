@@ -1,5 +1,37 @@
 # Changelog
 
+## v4.0.0 (2026-09-27)
+
+A new interface for the tray menu and the settings window.
+
+### Added
+- **Open Claude Desktop / Launch Claude Code** in the tray menu. Claude Desktop opens when it is installed (classic or Microsoft Store), otherwise its download page. Claude Code starts in a new terminal (Windows Terminal when installed) when `claude` is on `PATH` or in `%USERPROFILE%\.local\bin`, otherwise the install guide opens.
+- **Usage credits**: the Usage page shows the extra usage spent this month against its cap, and the tray menu shows it while credits are on. Amounts use the account's billing currency, formatted for your Windows region. Never sent to Discord.
+- **Desktop + CLI**: when a Claude Code CLI runs in a terminal beside Claude Desktop, Discord shows "Claude Desktop (Code) + CLI". The `{client}` variable follows.
+- **About page** with links to the source code, the author's GitHub profile, the release notes and the issue tracker.
+- A notice on the Profile buttons page: without Discord Nitro on your account, other people do not see the buttons.
+- Discord's elapsed timer now starts with the Claude Code session in use, instead of the time Claude Desktop was opened.
+
+### Changed
+- **Redesigned tray menu**: model and client at the top, the 5-hour session in large with its 24-hour chart, weekly limits side by side, a pause switch with 30 min / 1 h / Tomorrow, the activity type as icons, and the Discord account and elapsed time at the bottom. Start with Windows moved to Settings > General.
+- **Redesigned settings window** with a sidebar: Presence (live Discord preview, activity type, details, custom text with clickable variables), Usage, Privacy, Profile buttons, General and About. The footer shows when changes were last saved.
+- Sessions count only Claude Desktop Code tabs and Claude Code CLIs started in a terminal, not IDE or background SDK workers.
+- The browser right-click menu (Back, Refresh, Print…) is gone; text fields keep cut, copy and paste.
+
+### Fixed
+- A tray action (pause, activity type…) could replace an unreadable `config.json` with defaults, dropping private projects.
+- A pause or Do Not Disturb set from the tray could be undone by typing in an open settings window.
+- A rejected Discord update made the app reconnect four times a second.
+- Claude Code subagent logs could be taken for the session, switching the model and start time.
+- The usage cache was rewritten four times a second while Claude Desktop was open, and session logs were re-read at the same rate.
+- The tray menu could open off-screen or over the taskbar on a second monitor or with a different display scale.
+- Usage alerts were sent again after every app start.
+- The internal engine could stop silently after an error; opening the settings restarts it. Quit waits at most 2 seconds.
+- Two update installs could run at once, and an update that was withdrawn stayed offered.
+- Start with Windows showed as on when the startup entry pointed to an old copy of the app.
+- Launching Claude Code from the app inherited the environment of the session that started Claude RPC.
+- Copy diagnostic could stay disabled when the clipboard did not answer.
+
 ## v3.9.0 (2026-09-26)
 
 Claude RPC is now Windows only: macOS support has been removed.

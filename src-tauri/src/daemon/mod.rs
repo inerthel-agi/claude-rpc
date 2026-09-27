@@ -100,7 +100,11 @@ struct DetectionResult {
     // [unix ms, percent] samples of the 5-hour bucket, for the tray chart.
     history_5h: Vec<[u64; 2]>,
     code_instances: usize,
+    // Claude Desktop is the client and a Claude Code CLI also runs in a terminal.
+    cli_alongside: bool,
     started_at_ms: Option<u64>,
+    // Extra usage spend (private: tray and settings only, never Discord).
+    credits: Option<UsageCredits>,
 }
 
 impl Default for DetectionResult {
@@ -117,7 +121,9 @@ impl Default for DetectionResult {
             project_dir: None,
             history_5h: Vec::new(),
             code_instances: 0,
+            cli_alongside: false,
             started_at_ms: None,
+            credits: None,
         }
     }
 }
@@ -148,18 +154,22 @@ struct SessionInfo {
 // reading the provider files are far costlier and change rarely: cache them.
 const DESKTOP_UI_TTL_MS: u64 = 2_000;
 const PROVIDER_TTL_MS: u64 = 5_000;
+const SESSION_TTL_MS: u64 = 1_000;
 
 #[derive(Default)]
 pub(crate) struct StateMachine {
     desktop_cache: Option<(u64, Vec<u32>, DesktopInfo)>,
-    oauth_inflight:
-        Option<std::sync::mpsc::Receiver<Result<Vec<UsageLimitEntry>, OAuthFetchError>>>,
+    oauth_inflight: Option<std::sync::mpsc::Receiver<Result<OAuthUsage, OAuthFetchError>>>,
+    credits: Option<UsageCredits>,
     provider_cache: Option<(u64, String, Option<String>)>,
+    session_cache: Option<(u64, Option<SessionInfo>)>,
     history_5h: Vec<[u64; 2]>,
     history_loaded: bool,
     last_non_idle: Option<DetectionResult>,
     last_non_idle_at_ms: u64,
     cached_limits: Vec<UsageLimitEntry>,
+    limits_cache_loaded: bool,
+    limits_cache_written_at: u64,
     oauth_last_attempt_ms: u64,
     oauth_backoff_until_ms: u64,
     last_session_mtime: u64,
@@ -205,6 +215,7 @@ pub fn run(
             machine.pending_activity_refresh = true;
             machine.desktop_cache = None;
             machine.provider_cache = None;
+            machine.session_cache = None;
             last_scan_at = 0;
         }
 
@@ -238,8 +249,9 @@ pub fn run(
             ipc.as_ref().and_then(|client| client.username.as_deref()),
             &config,
         );
-        if status != last_status {
-            write_status(&status_path, &status);
+        // A failed write (file held open by antivirus/indexer) is retried on
+        // the next tick instead of being recorded as done.
+        if status != last_status && write_status(&status_path, &status) {
             last_status = status;
         }
 
@@ -260,13 +272,23 @@ pub fn run(
                     None => client.clear_activity(),
                 };
 
-                if sent.is_ok() {
-                    last_key = key;
-                    last_rpc_refresh_at = now;
-                } else {
-                    ipc = None;
-                    last_key.clear();
-                    last_rpc_refresh_at = 0;
+                match sent {
+                    Ok(()) => {
+                        last_key = key;
+                        last_rpc_refresh_at = now;
+                    }
+                    // Discord answered but rejected this activity: keep the
+                    // connection and wait for the next change or refresh
+                    // instead of reconnecting every 250 ms.
+                    Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+                        last_key = key;
+                        last_rpc_refresh_at = now;
+                    }
+                    Err(_) => {
+                        ipc = None;
+                        last_key.clear();
+                        last_rpc_refresh_at = 0;
+                    }
                 }
             }
         }
@@ -287,7 +309,12 @@ fn detect(
 ) -> DetectionResult {
     let mut desktop_found = false;
     let mut desktop_process_ids = Vec::new();
+    // Every Claude Code process (it makes Claude Code the client when Desktop
+    // is closed), and among them the Desktop Code-tab sessions and the CLIs
+    // started in a terminal; IDE and SDK/background workers are neither.
     let mut code_count = 0usize;
+    let mut desktop_sessions = 0usize;
+    let mut cli_count = 0usize;
     let mut oldest = None;
 
     for process in scan_claude_processes() {
@@ -297,6 +324,11 @@ fn detect(
             oldest = min_option(oldest, process.creation_date_ms);
         } else if is_code_process(&process) {
             code_count += 1;
+            if is_desktop_code_session(&process) {
+                desktop_sessions += 1;
+            } else if is_interactive_cli(&process) {
+                cli_count += 1;
+            }
             oldest = min_option(oldest, process.creation_date_ms);
         }
     }
@@ -309,11 +341,12 @@ fn detect(
         return DetectionResult {
             limits,
             history_5h: machine.history_5h.clone(),
+            credits: fresh_credits(machine, now_ms()),
             ..DetectionResult::default()
         };
     }
 
-    let session = read_session_info();
+    let session = cached_session_info(machine);
     if code_count == 0 {
         if let Some(session) = &session {
             if modified_ms(&session.file)
@@ -321,6 +354,10 @@ fn detect(
                 .unwrap_or(false)
             {
                 code_count = 1;
+                // With Desktop open, a fresh log is most likely its Code tab.
+                if !desktop_found {
+                    cli_count = 1;
+                }
                 oldest = min_option(oldest, session.started_at_ms);
             }
         }
@@ -382,9 +419,22 @@ fn detect(
         provider,
         project_dir: session.as_ref().and_then(|session| session.cwd.clone()),
         history_5h: machine.history_5h.clone(),
-        code_instances: code_count,
-        started_at_ms: oldest
-            .or_else(|| session.as_ref().and_then(|session| session.started_at_ms)),
+        // Sessions shown on the profile: Desktop Code tabs plus terminal CLIs.
+        code_instances: if client == ClientType::Code {
+            cli_count.max(1)
+        } else {
+            desktop_sessions + cli_count
+        },
+        cli_alongside: client == ClientType::Desktop && cli_count > 0,
+        started_at_ms: activity_start(
+            session.as_ref().and_then(|session| session.started_at_ms),
+            session
+                .as_ref()
+                .and_then(|session| modified_ms(&session.file)),
+            oldest,
+            now_ms(),
+        ),
+        credits: fresh_credits(machine, now_ms()),
     };
 
     if client == ClientType::Code {
@@ -409,6 +459,7 @@ fn detect(
         provider: result.provider,
         limits: result.limits,
         history_5h: result.history_5h,
+        credits: result.credits,
         ..DetectionResult::default()
     }
 }
@@ -421,7 +472,42 @@ fn cached_desktop_info(machine: &mut StateMachine, process_ids: &[u32]) -> Deskt
         }
     }
     let info = read_desktop_info(process_ids);
-    machine.desktop_cache = Some((now, process_ids.to_vec(), info.clone()));
+    // Stamp after the read: a slow UI Automation walk (long chat, busy Claude
+    // window) must not leave the cache already expired and rescan every tick.
+    machine.desktop_cache = Some((now_ms(), process_ids.to_vec(), info.clone()));
+    info
+}
+
+// A session log written within this delay is the session being worked in.
+const ACTIVE_SESSION_MS: u64 = 60 * 60 * 1_000;
+
+// Discord's "elapsed" timer: from the start of the Claude Code session in use,
+// else (Chat mode, no recent session) from the oldest running Claude client.
+fn activity_start(
+    session_start: Option<u64>,
+    session_modified: Option<u64>,
+    oldest_process: Option<u64>,
+    now: u64,
+) -> Option<u64> {
+    session_start
+        .filter(|start| *start <= now)
+        .filter(|_| {
+            session_modified.is_some_and(|mtime| now.saturating_sub(mtime) <= ACTIVE_SESSION_MS)
+        })
+        .or(oldest_process)
+}
+
+// The session folder walk and log tails cost far more than a 250 ms tick:
+// reuse the result for a second.
+fn cached_session_info(machine: &mut StateMachine) -> Option<SessionInfo> {
+    let now = now_ms();
+    if let Some((at, info)) = &machine.session_cache {
+        if now.saturating_sub(*at) < SESSION_TTL_MS {
+            return info.clone();
+        }
+    }
+    let info = read_session_info();
+    machine.session_cache = Some((now_ms(), info.clone()));
     info
 }
 
@@ -497,4 +583,40 @@ pub(crate) fn diagnostic_report() -> String {
         "
 ",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timer_starts_with_the_active_session() {
+        let now = 10 * 60 * 60 * 1_000;
+        let desktop_opened = Some(now - 9 * 60 * 60 * 1_000);
+        let session_start = Some(now - 20 * 60 * 1_000);
+        // Session log written a minute ago: its start wins.
+        assert_eq!(
+            activity_start(session_start, Some(now - 60_000), desktop_opened, now),
+            session_start
+        );
+        // Last written two hours ago (Chat mode now): back to the client start.
+        assert_eq!(
+            activity_start(
+                session_start,
+                Some(now - 2 * ACTIVE_SESSION_MS),
+                desktop_opened,
+                now
+            ),
+            desktop_opened
+        );
+        // No session, or a start in the future (clock skew): client start.
+        assert_eq!(
+            activity_start(None, Some(now), desktop_opened, now),
+            desktop_opened
+        );
+        assert_eq!(
+            activity_start(Some(now + 5_000), Some(now), desktop_opened, now),
+            desktop_opened
+        );
+    }
 }

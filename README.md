@@ -20,7 +20,7 @@ To build from source:
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_3.9.0_x64-setup.exe`: installer.
+- `Claude.RPC_4.0.0_x64-setup.exe`: installer.
 - `claude-rpc.exe`: portable executable.
 
 Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
@@ -39,9 +39,18 @@ npm run build
 
 Start Claude RPC. It runs in the notification area.
 
-- Left-click the icon to open the settings.
-- Right-click the icon to open the menu: live status card with usage bars, pause (30 minutes, 1 hour, until midnight, or always), start with Windows, activity type, updates.
+<p align="center">
+  <img src="docs/tray-menu.png" alt="Tray menu" height="520">
+  <img src="docs/settings.png" alt="Settings window" height="520">
+</p>
+
+The screenshots use sample data.
+
+- Right-click the icon to open the menu: model and client, usage limits with a 24-hour chart of the 5-hour session, usage credits, pause, activity type, Open Claude Desktop, Launch Claude Code, settings, updates.
+- Left-click the icon to open the settings: Presence, Usage, Privacy, Profile buttons, General, About.
 - Hover the icon to see the model and the usage limits.
+
+The menu opens Claude Desktop when it is installed, or its download page. It starts `claude` in a new terminal when Claude Code is on `PATH` or in `%USERPROFILE%\.local\bin`, or opens the install guide.
 
 Settings save as soon as they change. The Discord preview at the top of the settings shows the card as published, or why nothing is published.
 
@@ -89,12 +98,13 @@ Environment variables:
 | Claude Code model | Latest session log in `~\.claude\projects`, `/model` output, then settings and environment fallbacks. |
 | Plan | `~\.claude\.credentials.json`, then `~\.claude.json`. |
 | Usage limits | Claude usage API with the Claude Code sign-in, and the Claude Desktop usage button and popover. |
+| Usage credits | `extra_usage` in the same Claude usage API response, in the account's billing currency. Never sent to Discord. |
 
 ## Limitations
 
 - Windows only. macOS support was removed in v3.9.0.
 - Desktop detection reads window labels. A Claude Desktop interface change can break model or mode detection until the app is updated.
-- Discord shows buttons only in `watching` mode, and only to viewers with Discord Nitro.
+- Discord shows buttons only in `watching` mode. Without Discord Nitro on your account, other people do not see them.
 - The model icons load from this repository's `main` branch on GitHub.
 - Usage limits need a Claude subscription signed in to Claude Code, or Claude Desktop open.
 

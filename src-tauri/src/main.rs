@@ -3,6 +3,7 @@
 mod alerts;
 mod config;
 mod daemon;
+mod launch;
 
 use config::ClaudeConfig;
 use serde::Serialize;
@@ -55,6 +56,10 @@ struct TrayInfo {
     app_version: String,
     pause_until_ms: u64,
     language: String,
+    // Whether the tray's "Claude Desktop" / "Claude Code" items open the app or
+    // its download / install page.
+    desktop_installed: bool,
+    code_installed: bool,
 }
 
 #[cfg(windows)]
@@ -73,6 +78,8 @@ struct ClaudeStatus {
     // 5-hour usage history for the tray chart.
     hidden_reason: Option<String>,
     sessions: u64,
+    // A terminal Claude Code CLI runs beside Claude Desktop.
+    cli_alongside: bool,
     history_5h: Value,
     provider_line: String,
     discord_line: String,
@@ -80,6 +87,9 @@ struct ClaudeStatus {
     preview_primary: Option<String>,
     preview_secondary: Option<String>,
     preview_tertiary: Option<String>,
+    started_at_ms: Option<u64>,
+    // Extra usage spend: { enabled, used, limit, currency } or null.
+    credits: Value,
 }
 
 #[tauri::command]
@@ -125,6 +135,10 @@ fn load_status() -> Result<ClaudeStatus, String> {
             .and_then(Value::as_str)
             .map(str::to_string),
         sessions: value.get("sessions").and_then(Value::as_u64).unwrap_or(0),
+        cli_alongside: value
+            .get("cliAlongside")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         history_5h: value
             .get("history5h")
             .cloned()
@@ -155,6 +169,8 @@ fn load_status() -> Result<ClaudeStatus, String> {
             .get("previewTertiary")
             .and_then(Value::as_str)
             .map(str::to_string),
+        started_at_ms: value.get("startedAtMs").and_then(Value::as_u64),
+        credits: value.get("credits").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -190,13 +206,28 @@ async fn fetch_update(app: &tauri::AppHandle) -> Result<Option<UpdateInfo>, Stri
     }
 }
 
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
 async fn download_and_install(app: &tauri::AppHandle) -> Result<(), String> {
+    // The tray and the settings window can both start an install.
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return Err("An update is already being installed".into());
+    }
+    let result = install_latest(app).await;
+    INSTALLING.store(false, Ordering::SeqCst);
+    result
+}
+
+async fn install_latest(app: &tauri::AppHandle) -> Result<(), String> {
     let updater = app.updater().map_err(|err| err.to_string())?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "No update available".to_string())?;
+    let Some(update) = updater.check().await.map_err(|err| err.to_string())? else {
+        // The release was pulled or is already installed: drop the stale offer.
+        *app.state::<UpdateState>()
+            .available
+            .lock()
+            .expect("update state mutex poisoned") = None;
+        return Ok(());
+    };
     update
         .download_and_install(|_, _| {}, || {})
         .await
@@ -252,6 +283,8 @@ fn read_tray_info(app: &tauri::AppHandle) -> TrayInfo {
         app_version: app.package_info().version.to_string(),
         pause_until_ms: config.pause_until_ms,
         language: config.language,
+        desktop_installed: launch::find_desktop().is_some(),
+        code_installed: launch::find_code().is_some(),
     }
 }
 
@@ -264,9 +297,13 @@ async fn diagnostic(app: tauri::AppHandle) -> Result<String, String> {
     Ok(format!("Claude RPC v{version}\n{report}"))
 }
 
+// Async so reg.exe and the install checks never run on the UI thread (Tauri
+// runs sync commands there); the tray calls this every time it opens.
 #[tauri::command]
-fn tray_state(app: tauri::AppHandle) -> TrayInfo {
-    read_tray_info(&app)
+async fn tray_state(app: tauri::AppHandle) -> Result<TrayInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || read_tray_info(&app))
+        .await
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -311,6 +348,14 @@ async fn tray_action(app: tauri::AppHandle, action: String) -> Result<TrayInfo, 
                 config.dnd = false;
             })?;
         }
+        "open_desktop" => {
+            hide_tray();
+            launch::open_desktop()?;
+        }
+        "open_code" => {
+            hide_tray();
+            launch::open_code()?;
+        }
         "mode_playing" => set_mode("playing")?,
         "mode_watching" => set_mode("watching")?,
         "mode_listening" => set_mode("listening")?,
@@ -348,13 +393,27 @@ async fn tray_action(app: tauri::AppHandle, action: String) -> Result<TrayInfo, 
         }
         "quit" => {
             hide_tray();
+            // The daemon clears the Discord activity when it stops; wait for
+            // that, but never more than 2 s (an OAuth or IPC call can be slow).
             let state = app.state::<DaemonState>();
-            stop_daemon(&state);
+            let handle = request_daemon_stop(&state);
+            tauri::async_runtime::spawn_blocking(move || join_with_timeout(handle, 2_000))
+                .await
+                .ok();
             app.exit(0);
         }
         other => return Err(format!("unknown tray action: {other}")),
     }
-    Ok(read_tray_info(&app))
+    tauri::async_runtime::spawn_blocking(move || read_tray_info(&app))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+// About page links; only the names listed in launch::link_url are accepted.
+#[tauri::command]
+fn open_link(name: String) -> Result<(), String> {
+    let url = launch::link_url(&name).ok_or_else(|| format!("unknown link: {name}"))?;
+    launch::open_url(url)
 }
 
 fn main() {
@@ -382,6 +441,7 @@ fn main() {
             tray_state,
             tray_action,
             tray_fit,
+            open_link,
             diagnostic
         ])
         .setup(|app| {
@@ -476,7 +536,7 @@ fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
 // tray.js then reports the menu's real height through `tray_fit`, which shrinks
 // the window upward from its bottom edge so no transparent area catches clicks.
 const TRAY_MENU_WIDTH: f64 = 316.0;
-const TRAY_MENU_HEIGHT: f64 = 640.0;
+const TRAY_MENU_HEIGHT: f64 = 720.0;
 
 #[tauri::command]
 fn tray_fit(app: tauri::AppHandle, height: f64) -> Result<(), String> {
@@ -486,19 +546,29 @@ fn tray_fit(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
     let position = window.outer_position().map_err(|err| err.to_string())?;
     let size = window.outer_size().map_err(|err| err.to_string())?;
-    let height = (height.clamp(120.0, TRAY_MENU_HEIGHT) * scale).round() as u32;
+    let area = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| *monitor.work_area());
+    let mut height = (height.clamp(120.0, TRAY_MENU_HEIGHT) * scale).round() as u32;
+    if let Some(area) = area {
+        height = height.min(area.size.height);
+    }
     if height == size.height {
         return Ok(());
     }
+    // Grow upward from the bottom edge, never above the top of the work area.
     let bottom = position.y + size.height as i32;
+    let mut top = bottom - height as i32;
+    if let Some(area) = area {
+        top = top.max(area.position.y);
+    }
     window
         .set_size(tauri::PhysicalSize::new(size.width, height))
         .map_err(|err| err.to_string())?;
     window
-        .set_position(tauri::PhysicalPosition::new(
-            position.x,
-            bottom - height as i32,
-        ))
+        .set_position(tauri::PhysicalPosition::new(position.x, top))
         .map_err(|err| err.to_string())
 }
 
@@ -534,14 +604,45 @@ fn show_tray_menu(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) 
         }
     };
 
-    let size = window
-        .outer_size()
-        .unwrap_or(tauri::PhysicalSize::new(0, 0));
-    let x = (cursor.x - f64::from(size.width)).max(0.0);
-    let y = (cursor.y - f64::from(size.height)).max(0.0);
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    place_tray(app, &window, cursor);
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+// Bottom-right corner at the cursor, kept inside the work area of the monitor
+// under the cursor (which can have negative coordinates or another DPI scale).
+fn place_tray(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    cursor: tauri::PhysicalPosition<f64>,
+) {
+    // Logical height the menu last reported (tray_fit), independent of DPI.
+    let logical_height = match (window.outer_size(), window.scale_factor()) {
+        (Ok(size), Ok(scale)) if size.height > 0 => f64::from(size.height) / scale,
+        _ => TRAY_MENU_HEIGHT,
+    };
+    let Some(monitor) = app.monitor_from_point(cursor.x, cursor.y).ok().flatten() else {
+        let width = TRAY_MENU_WIDTH * window.scale_factor().unwrap_or(1.0);
+        let height = logical_height * window.scale_factor().unwrap_or(1.0);
+        let _ = window.set_position(tauri::PhysicalPosition::new(
+            cursor.x - width,
+            cursor.y - height,
+        ));
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let (left, top) = (f64::from(area.position.x), f64::from(area.position.y));
+    let (area_width, area_height) = (f64::from(area.size.width), f64::from(area.size.height));
+    let width = (TRAY_MENU_WIDTH * scale).round().min(area_width);
+    let height = (logical_height * scale).round().min(area_height);
+    let x = (cursor.x - width).clamp(left, left + area_width - width);
+    let y = (cursor.y - height).clamp(top, top + area_height - height);
+    // Move first so Windows applies this monitor's DPI, then size and re-place.
+    let position = tauri::PhysicalPosition::new(x, y);
+    let _ = window.set_position(position);
+    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+    let _ = window.set_position(position);
 }
 
 fn set_mode(mode: &str) -> Result<(), String> {
@@ -580,6 +681,28 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
 fn is_start_on_windows_enabled() -> bool {
     use std::os::windows::process::CommandExt;
+    // A value left by a moved or reinstalled copy does not count: turning the
+    // option on again rewrites it with this executable's path.
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new("reg.exe")
+        .args(["query", STARTUP_REG_KEY, "/v", STARTUP_REG_VALUE])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout)
+                    .to_lowercase()
+                    .contains(&exe.to_string_lossy().to_lowercase())
+        })
+        .unwrap_or(false)
+}
+
+// Any "Claude RPC" Run value, whatever path it points to.
+#[cfg(windows)]
+fn startup_value_exists() -> bool {
+    use std::os::windows::process::CommandExt;
     std::process::Command::new("reg.exe")
         .args(["query", STARTUP_REG_KEY, "/v", STARTUP_REG_VALUE])
         .creation_flags(CREATE_NO_WINDOW)
@@ -609,7 +732,7 @@ fn set_start_on_windows(enabled: bool) -> Result<(), String> {
             command.as_str(),
             "/f",
         ])
-    } else if is_start_on_windows_enabled() {
+    } else if startup_value_exists() {
         run_reg(&["delete", STARTUP_REG_KEY, "/v", STARTUP_REG_VALUE, "/f"])
     } else {
         Ok(())
@@ -665,22 +788,38 @@ fn start_daemon_inner(state: &DaemonState) {
     }
 
     let handle = std::thread::spawn(move || {
-        daemon::run(stop, force_refresh, config_path, status_path);
-        if let Ok(mut running) = running_flag.lock() {
-            *running = false;
+        // Reset the flag even if the daemon panics, so opening the settings
+        // (start_daemon) can restart it instead of believing it still runs.
+        struct Stopped(Arc<Mutex<bool>>);
+        impl Drop for Stopped {
+            fn drop(&mut self) {
+                *self.0.lock().unwrap_or_else(|err| err.into_inner()) = false;
+            }
         }
+        let _stopped = Stopped(running_flag);
+        daemon::run(stop, force_refresh, config_path, status_path);
     });
     *state.handle.lock().expect("daemon handle mutex poisoned") = Some(handle);
 }
 
-fn stop_daemon(state: &DaemonState) {
+fn request_daemon_stop(state: &DaemonState) -> Option<std::thread::JoinHandle<()>> {
     state.stop.store(true, Ordering::SeqCst);
-    if let Some(handle) = state
+    state
         .handle
         .lock()
         .expect("daemon handle mutex poisoned")
         .take()
-    {
+}
+
+fn join_with_timeout(handle: Option<std::thread::JoinHandle<()>>, timeout_ms: u64) {
+    let Some(handle) = handle else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    while !handle.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if handle.is_finished() {
         let _ = handle.join();
     }
 }
@@ -689,7 +828,9 @@ fn update_config<F>(mutator: F) -> Result<ClaudeConfig, String>
 where
     F: FnOnce(&mut ClaudeConfig),
 {
-    let mut config = read_config()?;
+    // Strict read: a tray click must not replace an unreadable config.json
+    // with defaults (that would drop private projects and other privacy keys).
+    let mut config = config::load_config(&config_path()?)?;
     mutator(&mut config);
     let config = config::normalize_config(config);
     write_config(&config)?;

@@ -74,22 +74,30 @@ pub(super) fn build_status(
         "discordLine": discord_line,
         "hiddenReason": hidden,
         "sessions": result.code_instances,
+        "cliAlongside": result.cli_alongside,
         "history5h": result.history_5h,
         "previewHeader": preview_header,
         "previewPrimary": preview_primary,
         "previewSecondary": preview_secondary,
         "previewTertiary": preview_tertiary,
+        // Session start (Discord's "elapsed" timer), for the settings preview
+        // and the tray footer.
+        "credits": result.credits,
+        "startedAtMs": if result.client == ClientType::Idle {
+            None
+        } else {
+            result.started_at_ms
+        },
     })
 }
 
-pub(super) fn write_status(path: &Path, value: &Value) {
+// True when the file now holds alue.
+pub(super) fn write_status(path: &Path, value: &Value) -> bool {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let tmp = path.with_extension("txt.tmp");
-    if fs::write(&tmp, value.to_string()).is_ok() {
-        let _ = fs::rename(tmp, path);
-    }
+    fs::write(&tmp, value.to_string()).is_ok() && fs::rename(tmp, path).is_ok()
 }
 
 pub(super) fn clear_status(path: &Path) {

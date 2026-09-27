@@ -1,34 +1,59 @@
 const invoke = window.__TAURI__.core.invoke;
-const { t, inner, formatReset, formatTime } = window.RpcShared;
+const {
+  t,
+  tBold,
+  describeClient,
+  describeModel,
+  planOf,
+  discordUser,
+  resetParts,
+  formatTime,
+  formatElapsed,
+  capitalize,
+  describeCredits,
+  sparkline,
+  peakOf,
+} = window.RpcShared;
 
 const $ = (selector) => document.querySelector(selector);
 const menu = $('#menu');
-const versionEl = $('#version');
-const startupItem = $('#startup');
+const modelLine = $('#model-line');
+const clientPill = $('#client-pill');
+const clientLabel = $('#client-label');
+const hero = $('#hero');
+const heroValue = $('#hero-value');
+const heroName = $('#hero-name');
+const heroFill = $('#hero-fill');
+const heroReset = $('#hero-reset');
+const heroRelative = $('#hero-relative');
+const heroAbsolute = $('#hero-absolute');
+const planPill = $('#plan-pill');
+const alertEl = $('#alert');
+const alertText = $('#alert-text');
+const chart = $('#chart');
+const chartPeak = $('#chart-peak');
+const chartSlot = $('#chart-slot');
+const usageEmpty = $('#usage-empty');
+const limitsEl = $('#limits');
+const creditsEl = $('#credits');
+const creditsValue = $('#credits-value');
+const creditsBar = $('#credits-bar');
+const creditsFill = $('#credits-fill');
+const pauseSwitch = $('#pause-switch');
+const pauseState = $('#pause-state');
+const modeLabel = $('#mode-label');
+const modeButtons = [...document.querySelectorAll('.mode[data-mode]')];
+const desktopLabel = $('#desktop-label');
+const desktopExternal = $('#desktop-external');
+const codeLabel = $('#code-label');
+const codeExternal = $('#code-external');
 const updateItem = $('#update');
 const updateLabel = $('#update-label');
 const updateBadge = $('#update-badge');
-const discordDot = $('#discord-dot');
-const discordText = $('#discord-text');
-const modelName = $('#model-name');
-const modelChip = $('#model-chip');
-const contextEl = $('#context');
-const alertEl = $('#alert');
-const alertText = $('#alert-text');
-const limitsEl = $('#limits');
-const pauseLabel = $('#pause-label');
-const resumeButton = $('#resume');
-const dndChip = $('#dnd');
-const modeItems = {
-  playing: $('#mode-playing'),
-  watching: $('#mode-watching'),
-  listening: $('#mode-listening'),
-  competing: $('#mode-competing'),
-};
+const foot = $('#foot');
+const footText = $('#foot-text');
 
-const EFFORTS = ['low', 'medium', 'high', 'extra high', 'max', 'ultracode'];
 const LIMIT_KEYS = { '5h': 'tray.5h', All: 'tray.weekly', Fable: 'tray.fable' };
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let busy = false;
 let fittedHeight = 0;
@@ -58,25 +83,39 @@ function applyTheme() {
   document.body.dataset.theme = ['dark', 'light'].includes(resolved) ? resolved : 'dark';
 }
 
+const pausedUntil = (state) => (state && state.pauseUntilMs > Date.now() ? state.pauseUntilMs : 0);
+
 function render(state) {
   if (!state) return;
   trayState = state;
   window.RpcShared.setLanguage(state.language);
-  versionEl.textContent = `v${state.appVersion}`;
-  startupItem.classList.toggle('on', state.startOnWindows);
-  Object.entries(modeItems).forEach(([mode, item]) => {
-    item.classList.toggle('checked', state.rpcMode === mode);
-  });
 
-  // Pause row: "Always" is permanent DND; the durations set a timed pause.
-  const pausedUntil = state.pauseUntilMs > Date.now() ? state.pauseUntilMs : 0;
-  dndChip.classList.toggle('on', state.dnd);
-  resumeButton.hidden = !state.dnd && !pausedUntil;
-  pauseLabel.textContent = state.dnd
-    ? t('tray.dndOn')
-    : pausedUntil
-      ? t('tray.pausedUntil', { time: formatTime(new Date(pausedUntil)) })
-      : t('tray.pause');
+  // The switch pauses until resumed (Do Not Disturb); the chips set a timed pause.
+  const until = pausedUntil(state);
+  const paused = state.dnd || !!until;
+  pauseSwitch.classList.toggle('on', paused);
+  pauseSwitch.setAttribute('aria-checked', String(paused));
+  pauseState.hidden = !paused;
+  pauseState.classList.toggle('on', paused);
+  pauseState.textContent = state.dnd
+    ? t('tray.pausedResume')
+    : until
+      ? t('tray.pausedUntil', { time: untilLabel(new Date(until)) })
+      : '';
+
+  modeButtons.forEach((button) => {
+    const checked = button.dataset.mode === state.rpcMode;
+    button.classList.toggle('checked', checked);
+    button.setAttribute('aria-checked', String(checked));
+  });
+  modeLabel.textContent = t(`mode.${state.rpcMode}`);
+
+  // Installed: open the app. Missing: its download / install page (arrow icon).
+  desktopLabel.textContent = t(state.desktopInstalled ? 'tray.openDesktop' : 'tray.getDesktop');
+  // SVG elements have no `hidden` property: toggle the attribute itself.
+  desktopExternal.toggleAttribute('hidden', !!state.desktopInstalled);
+  codeLabel.textContent = t(state.codeInstalled ? 'tray.launchCode' : 'tray.installCode');
+  codeExternal.toggleAttribute('hidden', !!state.codeInstalled);
 
   updateItem.title = state.updateError || '';
   updateBadge.hidden = !state.updateVersion || !!state.updateError;
@@ -91,112 +130,127 @@ function render(state) {
   if (lastStatus) renderStatus(lastStatus);
 }
 
-function renderStatus(status) {
-  lastStatus = status;
-  const user = inner(status.discordLine, 'Discord:');
-  const connected = (status.discordLine || '').startsWith('Discord: Connected');
-  discordDot.classList.toggle('ok', connected);
-  discordText.replaceChildren(connected ? t('tray.discordConnected') : t('tray.discordOff'));
-  if (connected && user) {
-    const name = document.createElement('b');
-    name.textContent = user;
-    discordText.append(' · ', name);
-  }
-
-  const running = status.claudeLine && status.claudeLine !== 'Claude: Off';
-  const parts = running ? (status.modelLine || '').split(' | ') : [];
-  const effort = parts.length > 1 && EFFORTS.includes(parts[parts.length - 1].toLowerCase())
-    ? parts[parts.length - 1]
-    : '';
-  modelName.textContent = !running
-    ? t('tray.notRunning')
-    : parts[0] && parts[0] !== 'Auto-detect'
-      ? parts[0]
-      : 'Claude';
-  modelChip.textContent = effort;
-  modelChip.hidden = !effort;
-
-  const client = (status.claudeLine || '').replace(/^Claude:\s*/, '');
-  const app = client.startsWith('Desktop')
-    ? ['Claude Desktop', inner(status.claudeLine, 'Claude: Desktop')].filter(Boolean).join(' · ')
-    : client.startsWith('CLI')
-      ? 'Claude Code'
-      : '';
-  const provider = (status.providerLine || '').replace(/^Provider:\s*/, '');
-  const plan = inner(status.providerLine, 'Provider:') || provider.split(' (')[0] || '';
-  const sessions = running && status.sessions > 1 ? t('tray.sessions', { count: status.sessions }) : '';
-  contextEl.textContent = [app, plan, sessions]
-    .filter((part) => part && part !== 'Unknown')
-    .join(' · ');
-
-  const limits = Array.isArray(status.limits) ? status.limits : [];
-  const fiveHour = limits.find((limit) => limit.label === '5h');
-  const fivePercent = fiveHour ? Number(fiveHour.usedPercent) || 0 : 0;
-  alertEl.hidden = fivePercent < 80;
-  alertText.textContent = t('tray.alert', { percent: fivePercent >= 95 ? 95 : 80 });
-
-  limitsEl.replaceChildren(
-    ...limits.map((limit) => {
-      const percent = Math.max(0, Math.min(100, Number(limit.usedPercent) || 0));
-      const row = document.createElement('div');
-      const head = document.createElement('div');
-      head.className = 'limit-head';
-      const label = document.createElement('span');
-      label.textContent = LIMIT_KEYS[limit.label] ? t(LIMIT_KEYS[limit.label]) : limit.label;
-      const reset = formatReset(limit.reset);
-      if (reset) {
-        const small = document.createElement('small');
-        small.textContent = reset;
-        label.append(small);
-      }
-      const value = document.createElement('span');
-      value.textContent = `${percent}%`;
-      head.append(label, value);
-      const bar = document.createElement('div');
-      bar.className = 'bar';
-      const fill = document.createElement('i');
-      fill.style.width = `${percent}%`;
-      fill.classList.toggle('warn', percent >= 80);
-      bar.append(fill);
-      row.append(head, bar);
-      if (limit.label === '5h') {
-        const chart = sparkline(status.history5h);
-        if (chart) row.append(chart);
-      }
-      return row;
-    }),
-  );
+// "14:30" today, "Mon 00:00" on another day (a "Tomorrow" pause).
+function untilLabel(date) {
+  if (date.toDateString() === new Date().toDateString()) return formatTime(date);
+  const lang = document.documentElement.lang === 'fr' ? 'fr-FR' : 'en-GB';
+  return `${date.toLocaleDateString(lang, { weekday: 'short' })} ${formatTime(date)}`;
 }
 
-// Last 24 h of the 5-hour bucket, sampled every 5 minutes by the daemon.
-function sparkline(history) {
-  const points = (Array.isArray(history) ? history : []).filter(
-    (point) => Array.isArray(point) && Date.now() - point[0] <= 24 * 60 * 60 * 1000,
+const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
+
+function levelClass(fill, percent) {
+  fill.classList.toggle('warn', percent >= 80 && percent < 95);
+  fill.classList.toggle('danger', percent >= 95);
+}
+
+function renderStatus(status) {
+  lastStatus = status;
+  const client = describeClient(status);
+  const { model, effort } = describeModel(status);
+  modelLine.textContent = client.running
+    ? [model || 'Claude', effort].filter(Boolean).join(' · ')
+    : t('tray.notRunning');
+  clientPill.classList.toggle('on', client.running);
+  clientLabel.textContent = client.label;
+
+  const plan = planOf(status).replace(/^Claude\s+/, '').replace(/\s*\((.*)\)/, ' $1');
+  planPill.textContent = plan;
+  planPill.hidden = !plan;
+
+  // The 5-hour session leads; the other buckets follow as compact rows.
+  const limits = Array.isArray(status.limits) ? status.limits : [];
+  const main = limits.find((limit) => limit.label === '5h') || limits[0];
+  hero.hidden = !main;
+  usageEmpty.hidden = !!main;
+  if (main) {
+    const percent = clampPercent(main.usedPercent);
+    heroValue.textContent = `${percent}%`;
+    heroName.textContent = LIMIT_KEYS[main.label] ? t(LIMIT_KEYS[main.label]) : main.label;
+    heroFill.style.width = `${percent}%`;
+    levelClass(heroFill, percent);
+    const reset = resetParts(main.reset);
+    heroRelative.textContent = reset ? capitalize(reset.relative) : '';
+    heroAbsolute.textContent = reset ? reset.absolute : '';
+    heroReset.hidden = !reset;
+
+    const fiveHour = main.label === '5h';
+    alertEl.hidden = !fiveHour || percent < 80;
+    alertText.textContent = t('tray.alert', { percent: percent >= 95 ? 95 : 80 });
+
+    const svg = fiveHour ? sparkline(status.history5h) : null;
+    chart.hidden = !svg;
+    chartSlot.replaceChildren(...(svg ? [svg] : []));
+    chartPeak.textContent = svg ? t('tray.peak', { percent: peakOf(status.history5h) }) : '';
+  }
+
+  limitsEl.replaceChildren(
+    ...limits
+      .filter((limit) => limit !== main)
+      .map((limit) => {
+        const percent = clampPercent(limit.usedPercent);
+        const row = document.createElement('div');
+        const head = document.createElement('div');
+        head.className = 'limit-head';
+        const label = document.createElement('span');
+        label.textContent = LIMIT_KEYS[limit.label] ? t(LIMIT_KEYS[limit.label]) : limit.label;
+        const value = document.createElement('b');
+        value.textContent = `${percent}%`;
+        head.append(label, value);
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        const fill = document.createElement('i');
+        fill.style.width = `${percent}%`;
+        levelClass(fill, percent);
+        bar.append(fill);
+        row.append(head, bar);
+        const parts = resetParts(limit.reset);
+        if (parts) {
+          const reset = document.createElement('small');
+          reset.className = 'limit-reset';
+          reset.textContent = parts.absolute || parts.relative;
+          row.append(reset);
+        }
+        return row;
+      }),
   );
-  if (points.length < 2) return null;
-  const width = 260;
-  const height = 30;
-  const start = points[0][0];
-  const span = Math.max(1, points[points.length - 1][0] - start);
-  const coords = points.map(([time, percent]) => [
-    ((time - start) / span) * width,
-    height - 2 - (Math.min(100, percent) / 100) * (height - 4),
-  ]);
-  const line = coords.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('preserveAspectRatio', 'none');
-  svg.setAttribute('class', 'spark');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', t('tray.today'));
-  const area = document.createElementNS(SVG_NS, 'path');
-  area.setAttribute('d', `${line} L${width} ${height} L0 ${height} Z`);
-  area.setAttribute('class', 'spark-area');
-  const stroke = document.createElementNS(SVG_NS, 'path');
-  stroke.setAttribute('d', line);
-  stroke.setAttribute('class', 'spark-line');
-  svg.append(area, stroke);
-  return svg;
+
+  renderCredits(status.credits);
+  renderFooter(status, client);
+}
+
+// Extra usage spend, only while usage credits are turned on for the account.
+function renderCredits(raw) {
+  const credits = describeCredits(raw);
+  creditsEl.hidden = !credits || !credits.enabled || !credits.used;
+  if (creditsEl.hidden) return;
+  creditsValue.textContent = credits.limit ? `${credits.used} / ${credits.limit}` : credits.used;
+  creditsBar.hidden = credits.percent === null;
+  creditsFill.style.width = `${credits.percent || 0}%`;
+  levelClass(creditsFill, credits.percent || 0);
+}
+
+// Why nothing reaches Discord right now, or '' when the activity is shown.
+function hiddenReason(status, client) {
+  if (trayState && trayState.dnd) return t('reason.dnd');
+  if (pausedUntil(trayState)) return t('reason.paused');
+  if (status.hiddenReason === 'private') return t('reason.private');
+  if (status.hiddenReason === 'chat') return t('reason.chat');
+  if (!client.running) return t('reason.notRunning');
+  return '';
+}
+
+function renderFooter(status, client) {
+  const user = discordUser(status);
+  foot.classList.toggle('on', !!user);
+  if (!user) {
+    footText.replaceChildren(t('tray.discordOff'));
+    return;
+  }
+  const reason = hiddenReason(status, client);
+  const nodes = tBold(reason ? 'tray.hiddenOn' : 'tray.showingOn', { user });
+  const extra = reason || (status.startedAtMs ? formatElapsed(status.startedAtMs) : '');
+  footText.replaceChildren(...nodes, ...(extra ? [` · ${extra}`] : []));
 }
 
 async function refreshStatus() {
@@ -243,6 +297,11 @@ function pauseEnd(value) {
 }
 
 async function act(action) {
+  // Closing never waits behind a slow action (an update check can take long).
+  if (action === 'close') {
+    invoke('tray_action', { action }).catch(() => {});
+    return;
+  }
   if (busy) return;
   busy = true;
   const checking = action === 'update' && !updateItem.classList.contains('update-ready');
@@ -264,6 +323,7 @@ async function act(action) {
     }
   } finally {
     busy = false;
+    fitWindow();
   }
 }
 
@@ -273,6 +333,13 @@ document.querySelectorAll('[data-action]').forEach((item) => {
 document.querySelectorAll('[data-pause]').forEach((chip) => {
   chip.addEventListener('click', () => act(`pause:${pauseEnd(chip.dataset.pause)}`));
 });
+pauseSwitch.addEventListener('click', () => {
+  const paused = trayState && (trayState.dnd || pausedUntil(trayState));
+  act(paused ? 'resume' : 'dnd');
+});
+modeButtons.forEach((button) => {
+  button.addEventListener('click', () => act(`mode_${button.dataset.mode}`));
+});
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') act('close');
@@ -280,7 +347,14 @@ document.addEventListener('keydown', (event) => {
 
 window.addEventListener('focus', refresh);
 // Keep the card live while the menu is open.
-setInterval(() => {
-  if (document.hasFocus() && !document.hidden) refreshStatus();
+let polling = false;
+setInterval(async () => {
+  if (polling || !document.hasFocus() || document.hidden) return;
+  polling = true;
+  try {
+    await refreshStatus();
+  } finally {
+    polling = false;
+  }
 }, 2000);
 refresh();

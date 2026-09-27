@@ -236,7 +236,9 @@ pub(crate) fn current_limits(
     detected_limits: &[UsageLimitEntry],
 ) -> Vec<UsageLimitEntry> {
     let now = now_ms();
-    if machine.cached_limits.is_empty() {
+    // Load the cache once per run, not on every tick while nothing is known.
+    if !machine.limits_cache_loaded {
+        machine.limits_cache_loaded = true;
         if let Some(cache) = read_limits_cache(now) {
             machine.cached_limits = cache.limits;
         }
@@ -245,24 +247,46 @@ pub(crate) fn current_limits(
     // OAuth keeps polling (at its own cadence) even while Desktop is scraped:
     // with the usage popover closed Desktop only exposes the 5-hour bucket, and
     // skipping OAuth would let the weekly bucket expire from the display.
-    let oauth_limits = maybe_fetch_oauth_limits(machine, now).unwrap_or_default();
-    let mut changed = false;
+    let oauth = maybe_fetch_oauth_limits(machine, now);
+    if let Some(usage) = &oauth {
+        // A successful fetch without extra_usage means credits are not available.
+        machine.credits = usage.credits.clone().map(|credits| UsageCredits {
+            updated_at_ms: now,
+            ..credits
+        });
+    }
+    let oauth_limits = oauth.map(|usage| usage.limits).unwrap_or_default();
+    let before = machine.cached_limits.clone();
     if !oauth_limits.is_empty() {
         machine.cached_limits = merge_limit_entries(&machine.cached_limits, &oauth_limits, now);
-        changed = true;
     }
     // Desktop is merged last: it is read every scan, so it is the freshest value.
     if !detected_limits.is_empty() {
         machine.cached_limits = merge_limit_entries(&machine.cached_limits, detected_limits, now);
-        changed = true;
     }
-    if changed {
+    // Desktop limits are merged on every 250 ms scan: write the cache when a
+    // value changes, else only every few minutes to keep its timestamps fresh.
+    let refreshed = !oauth_limits.is_empty() || !detected_limits.is_empty();
+    if refreshed
+        && (!same_limit_values(&before, &machine.cached_limits)
+            || now.saturating_sub(machine.limits_cache_written_at) >= LIMITS_CACHE_REWRITE_MS)
+    {
         write_limits_cache(now, &machine.cached_limits);
+        machine.limits_cache_written_at = now;
     }
 
     let fresh = fresh_limit_entries(&machine.cached_limits, now);
     record_usage_history(machine, &fresh, now);
     fresh
+}
+
+const LIMITS_CACHE_REWRITE_MS: u64 = 5 * 60 * 1_000;
+
+fn same_limit_values(a: &[UsageLimitEntry], b: &[UsageLimitEntry]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.label == b.label && a.used_percent == b.used_percent && a.reset == b.reset
+        })
 }
 
 const HISTORY_SAMPLE_MS: u64 = 5 * 60 * 1_000;
@@ -286,6 +310,9 @@ pub(crate) fn record_usage_history(
     let Some(entry) = limits.iter().find(|entry| entry.label == "5h") else {
         return;
     };
+    // After the clock was set back, samples dated in the future would block
+    // new ones until the clock caught up: drop them.
+    machine.history_5h.retain(|sample| sample[0] <= now);
     let last = machine
         .history_5h
         .last()
@@ -320,10 +347,7 @@ const OAUTH_USAGE_IDLE_POLL_MS: u64 = 10 * 60 * 1000;
 const OAUTH_USAGE_ACTIVITY_POLL_MS: u64 = 60 * 1000;
 const OAUTH_USAGE_BACKOFF_MS: u64 = 5 * 60 * 1000;
 
-pub(crate) fn maybe_fetch_oauth_limits(
-    machine: &mut StateMachine,
-    now: u64,
-) -> Option<Vec<UsageLimitEntry>> {
+pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> Option<OAuthUsage> {
     // The HTTP call runs on its own thread (up to 8 s): the daemon loop only
     // collects the result, so presence, status and Quit never wait on it.
     let polled = machine.oauth_inflight.as_ref().map(Receiver::try_recv);
@@ -331,7 +355,7 @@ pub(crate) fn maybe_fetch_oauth_limits(
         Some(Ok(result)) => {
             machine.oauth_inflight = None;
             return match result {
-                Ok(entries) => Some(entries),
+                Ok(usage) => Some(usage),
                 Err(OAuthFetchError::RateLimited) => {
                     machine.oauth_backoff_until_ms = now + OAUTH_USAGE_BACKOFF_MS;
                     None
@@ -367,6 +391,63 @@ pub(crate) fn maybe_fetch_oauth_limits(
     None
 }
 
+// Extra usage ("usage credits") spent in the billing period, from the OAuth
+// usage endpoint. Amounts are in minor units of `currency` (cents for USD);
+// the currency is the account's billing currency, never guessed from location.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsageCredits {
+    pub(crate) enabled: bool,
+    pub(crate) used: Option<u64>,
+    pub(crate) limit: Option<u64>,
+    // None when the API gives no valid code: shown as a plain amount.
+    pub(crate) currency: Option<String>,
+    #[serde(skip)]
+    pub(crate) updated_at_ms: u64,
+}
+
+pub(crate) struct OAuthUsage {
+    pub(crate) limits: Vec<UsageLimitEntry>,
+    pub(crate) credits: Option<UsageCredits>,
+}
+
+// `extra_usage` is absent or null when the plan has no extra usage.
+pub(crate) fn parse_extra_usage(body: &Value) -> Option<UsageCredits> {
+    let extra = body.get("extra_usage")?.as_object()?;
+    let amount = |key: &str| {
+        extra
+            .get(key)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| value.round() as u64)
+    };
+    // An ISO 4217 code; anything else would break the UI's currency formatting.
+    let currency = extra
+        .get("currency")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|code| code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(str::to_ascii_uppercase);
+    Some(UsageCredits {
+        enabled: extra
+            .get("is_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        used: amount("used_credits"),
+        limit: amount("monthly_limit"),
+        currency,
+        updated_at_ms: 0,
+    })
+}
+
+// Credits are shown only while fresh, like the limit buckets.
+pub(crate) fn fresh_credits(machine: &StateMachine, now: u64) -> Option<UsageCredits> {
+    machine
+        .credits
+        .clone()
+        .filter(|credits| now.saturating_sub(credits.updated_at_ms) <= LIMITS_DISPLAY_TTL_MS)
+}
+
 pub(crate) enum OAuthFetchError {
     NoToken,
     Network,
@@ -374,7 +455,7 @@ pub(crate) enum OAuthFetchError {
     Parse,
 }
 
-pub(crate) fn fetch_oauth_usage() -> Result<Vec<UsageLimitEntry>, OAuthFetchError> {
+pub(crate) fn fetch_oauth_usage() -> Result<OAuthUsage, OAuthFetchError> {
     let token = read_oauth_access_token().ok_or(OAuthFetchError::NoToken)?;
     let response = ureq::get(OAUTH_USAGE_URL)
         .timeout(std::time::Duration::from_secs(8))
@@ -388,7 +469,10 @@ pub(crate) fn fetch_oauth_usage() -> Result<Vec<UsageLimitEntry>, OAuthFetchErro
         Err(_) => return Err(OAuthFetchError::Network),
     };
     let value: Value = serde_json::from_str(&body).map_err(|_| OAuthFetchError::Parse)?;
-    Ok(parse_oauth_usage_response(&value))
+    Ok(OAuthUsage {
+        limits: parse_oauth_usage_response(&value),
+        credits: parse_extra_usage(&value),
+    })
 }
 
 pub(crate) fn read_oauth_access_token() -> Option<String> {
@@ -681,6 +765,46 @@ mod tests {
             (limits[0].label.as_str(), limits[0].used_percent),
             ("5h", 2)
         );
+    }
+
+    #[test]
+    fn parses_extra_usage_credits() {
+        let body = json!({
+            "extra_usage": {
+                "is_enabled": true,
+                "monthly_limit": 4000,
+                "used_credits": 1250.0,
+                "utilization": 31.25,
+                "currency": "eur"
+            }
+        });
+        assert_eq!(
+            parse_extra_usage(&body),
+            Some(UsageCredits {
+                enabled: true,
+                used: Some(1250),
+                limit: Some(4000),
+                currency: Some("EUR".into()),
+                updated_at_ms: 0,
+            })
+        );
+
+        // Disabled, unlimited, no currency: no amounts, currency unknown.
+        let body = json!({"extra_usage": {"is_enabled": false, "monthly_limit": null,
+            "used_credits": null, "currency": null}});
+        let credits = parse_extra_usage(&body).unwrap();
+        assert!(!credits.enabled);
+        assert_eq!((credits.used, credits.limit), (None, None));
+        assert_eq!(credits.currency, None);
+
+        // Invalid currency codes and negative amounts are not trusted.
+        let body = json!({"extra_usage": {"used_credits": -5, "currency": "€UR"}});
+        let credits = parse_extra_usage(&body).unwrap();
+        assert_eq!(credits.used, None);
+        assert_eq!(credits.currency, None);
+
+        assert_eq!(parse_extra_usage(&json!({"extra_usage": null})), None);
+        assert_eq!(parse_extra_usage(&json!({})), None);
     }
 
     #[test]

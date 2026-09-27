@@ -58,13 +58,17 @@ pub(super) fn build_details(result: &DetectionResult, mode: &str) -> String {
         (ClientType::Idle, _) => "Claude",
     };
 
+    let mut details = base.to_string();
     if result.client == ClientType::Desktop {
         if let Some(mode_label) = desktop_mode_label(result) {
-            return format!("{base} ({mode_label})");
+            details = format!("{base} ({mode_label})");
         }
     }
-
-    base.to_string()
+    // "Claude Desktop (Code) + CLI" when a terminal CLI runs beside Desktop.
+    if result.cli_alongside {
+        details.push_str(" + CLI");
+    }
+    details
 }
 
 pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> String {
@@ -121,6 +125,7 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
             .unwrap_or_default()
     };
     let client = match result.client {
+        ClientType::Desktop if result.cli_alongside => "Claude Desktop + CLI",
         ClientType::Desktop => "Claude Desktop",
         ClientType::Code => "Claude Code",
         ClientType::Idle => "Claude",
@@ -308,6 +313,9 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         "buttons": config.buttons,
         "showSessions": config.show_sessions,
         "sessions": result.code_instances,
+        "cliAlongside": result.cli_alongside,
+        // A new session restarts the Discord timer.
+        "startedAt": result.started_at_ms,
         "modelIcon": config.model_icon,
         "detailsTemplate": config.details_template,
         "stateTemplate": config.state_template,
@@ -455,6 +463,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn marks_a_terminal_cli_beside_desktop() {
+        let mut config = ClaudeConfig::default();
+        let result = DetectionResult {
+            client: ClientType::Desktop,
+            mode: Some("Code".into()),
+            cli_alongside: true,
+            ..DetectionResult::default()
+        };
+        assert_eq!(
+            build_activity(&result, &config).unwrap()["details"],
+            "Claude Desktop (Code) + CLI"
+        );
+        assert_eq!(build_status(&result, None, &config)["cliAlongside"], true);
+        config.rpc_mode = "watching".into();
+        assert_eq!(
+            build_activity(&result, &config).unwrap()["details"],
+            "Watching Claude (Code) + CLI"
+        );
+        assert_eq!(
+            render_template("{client}", &result).as_deref(),
+            Some("Claude Desktop + CLI")
+        );
+        // Changing it pushes a new presence.
+        let alone = DetectionResult {
+            cli_alongside: false,
+            ..result.clone()
+        };
+        assert_ne!(
+            presence_key(&result, &config),
+            presence_key(&alone, &config)
+        );
     }
 
     #[test]

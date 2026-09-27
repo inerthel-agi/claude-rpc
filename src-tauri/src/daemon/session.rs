@@ -38,7 +38,11 @@ pub(super) fn collect_jsonl_candidates(root: &Path, max_age_ms: u64) -> Vec<(Pat
                 Err(_) => continue,
             };
             if file_type.is_dir() {
-                walk(&path, depth + 1, now, max_age_ms, out);
+                // <session>/subagents/agent-*.jsonl are Task subagent logs, not
+                // the user's session: they would swap the model and start time.
+                if entry.file_name() != "subagents" {
+                    walk(&path, depth + 1, now, max_age_ms, out);
+                }
                 continue;
             }
             if !file_type.is_file()
@@ -100,7 +104,10 @@ pub(super) fn read_session_start_ms(path: &Path) -> Option<u64> {
     let len = file.read(&mut buf).ok()?;
     let text = String::from_utf8_lossy(&buf[..len]);
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let entry: Value = serde_json::from_str(line).ok()?;
+        // A first line longer than the buffer is cut off: skip it, not the file.
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         if let Some(ts) = entry
             .get("timestamp")
             .or_else(|| {
