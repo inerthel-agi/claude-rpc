@@ -29,10 +29,12 @@ pub(super) fn detect_provider() -> String {
         let any = |check: fn(&str) -> bool| config_texts.iter().any(|raw| check(raw));
         // Precedence mirrors Claude Code: an apiKeyHelper beats the login, and a
         // live subscription OAuth login beats an API key left over from an
-        // earlier Console login (both can sit on disk at the same time).
+        // earlier Console login (both can sit on disk at the same time). The
+        // OAuth token may live outside .credentials.json (OS keychain), so a
+        // subscription plan on the account profile counts as a live login too.
         if any(has_api_key_helper) {
             "Anthropic API".into()
-        } else if any(has_subscription_credentials) {
+        } else if any(has_subscription_credentials) || detect_plan().is_some() {
             "Subscription".into()
         } else if any(has_anthropic_api_auth) {
             "Anthropic API".into()
