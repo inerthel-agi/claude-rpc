@@ -794,7 +794,11 @@ mod tests {
         ]);
         assert_eq!(limits.len(), 1);
         assert_eq!(
-            (limits[0].label.as_str(), limits[0].used_percent, limits[0].reset.as_deref()),
+            (
+                limits[0].label.as_str(),
+                limits[0].used_percent,
+                limits[0].reset.as_deref()
+            ),
             ("All", 17, Some("sun 4:00 am"))
         );
     }
