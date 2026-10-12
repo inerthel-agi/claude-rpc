@@ -55,12 +55,15 @@ pub(crate) fn parse_usage_limits(names: &[String]) -> Vec<UsageLimitEntry> {
     let mut entries = Vec::new();
 
     for (index, name) in names.iter().enumerate() {
-        if let Some(entry) = parse_usage_button(name) {
-            if !entries
-                .iter()
-                .any(|existing: &UsageLimitEntry| existing.label == entry.label)
-            {
-                entries.push(entry);
+        let button = parse_usage_button(name);
+        if !button.is_empty() {
+            for entry in button {
+                if !entries
+                    .iter()
+                    .any(|existing: &UsageLimitEntry| existing.label == entry.label)
+                {
+                    entries.push(entry);
+                }
             }
             continue;
         }
@@ -90,34 +93,57 @@ pub(crate) fn parse_usage_limits(names: &[String]) -> Vec<UsageLimitEntry> {
 
 // The Code tab composer's usage button is always on screen, even with the
 // popover closed: "Usage: Context 146.8k / 1M (15%), 6% of 5-hour limit,
-// Resets in 4 hr 33 min". Only the 5-hour bucket is exposed there.
+// Resets in 4 hr 33 min". Newer builds use "<bucket>: N%" segments instead:
+// "Usage: Context 163.8k / 1M (16%), Weekly · all models: 17%, Resets Sun 4:00 AM".
 #[cfg(any(windows, test))]
-pub(crate) fn parse_usage_button(value: &str) -> Option<UsageLimitEntry> {
-    let lower = value.to_ascii_lowercase();
-    if !lower.starts_with("usage:") {
-        return None;
+pub(crate) fn parse_usage_button(value: &str) -> Vec<UsageLimitEntry> {
+    let lower = normalize_ui_label(value);
+    let Some(rest) = lower.strip_prefix("usage:") else {
+        return Vec::new();
+    };
+    let segments = rest.split(',').map(str::trim).collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    for (index, segment) in segments.iter().enumerate() {
+        let (label, percent) = if let Some(percent) = segment.strip_suffix("% of 5-hour limit") {
+            ("5h", percent)
+        } else if let Some((name, percent)) = segment.rsplit_once(':') {
+            let Some(label) = bucket_label(name.trim()) else {
+                continue;
+            };
+            let Some(percent) = percent.trim().strip_suffix('%') else {
+                continue;
+            };
+            (label, percent)
+        } else {
+            continue;
+        };
+        let Ok(used_percent) = percent.trim().parse::<u32>() else {
+            continue;
+        };
+        let reset = segments
+            .get(index + 1)
+            .and_then(|segment| segment.strip_prefix("resets "))
+            .map(|reset| reset.trim().to_string());
+        entries.push(UsageLimitEntry {
+            label: label.into(),
+            used_percent: used_percent.min(100) as u8,
+            reset,
+            updated_at_ms: 0,
+        });
     }
-    let segments = lower.split(',').map(str::trim).collect::<Vec<_>>();
-    let index = segments
-        .iter()
-        .position(|segment| segment.ends_with("% of 5-hour limit"))?;
-    let used_percent = segments[index]
-        .split('%')
-        .next()?
-        .trim()
-        .parse::<u32>()
-        .ok()?
-        .min(100) as u8;
-    let reset = segments
-        .get(index + 1)
-        .and_then(|segment| segment.strip_prefix("resets "))
-        .map(|reset| reset.trim().to_string());
-    Some(UsageLimitEntry {
-        label: "5h".into(),
-        used_percent,
-        reset,
-        updated_at_ms: 0,
-    })
+    entries
+}
+
+// Bucket for a normalized Desktop label; other per-model buckets are ignored.
+#[cfg(any(windows, test))]
+fn bucket_label(norm: &str) -> Option<&'static str> {
+    match norm {
+        "current session" | "5-hour limit" => Some("5h"),
+        "all models" => Some("All"),
+        _ if norm.starts_with("weekly") && norm.ends_with("all models") => Some("All"),
+        _ if norm.starts_with("weekly") && norm.ends_with("fable") => Some("Fable"),
+        _ => None,
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -159,17 +185,13 @@ pub(crate) fn find_limit_label(names: &[String], usage_index: usize) -> Option<(
     let start = usage_index.saturating_sub(12);
     for index in (start..usage_index).rev() {
         let norm = normalize_ui_label(&names[index]);
-        let label = match norm.as_str() {
-            "current session" | "5-hour limit" => "5h",
-            "all models" => "All",
-            // Current popover: "Weekly · all models" and the per-model
-            // "Weekly · Fable" bucket; other per-model buckets are ignored.
-            _ if norm.starts_with("weekly") && norm.ends_with("all models") => "All",
-            _ if norm.starts_with("weekly") && norm.ends_with("fable") => "Fable",
-            _ if norm.starts_with("weekly") => return None,
-            _ => continue,
-        };
-        return Some((label.into(), index));
+        if let Some(label) = bucket_label(&norm) {
+            return Some((label.into(), index));
+        }
+        // An unsupported per-model bucket owns this percentage.
+        if norm.starts_with("weekly") {
+            return None;
+        }
     }
     None
 }
@@ -764,6 +786,16 @@ mod tests {
         assert_eq!(
             (limits[0].label.as_str(), limits[0].used_percent),
             ("5h", 2)
+        );
+
+        // Newer composer button: "<bucket>: N%" segments.
+        let limits = parse_usage_limits(&[
+            "Usage: Context 163.8k / 1M (16%), Weekly · all models: 17%, Resets Sun 4:00 AM".into(),
+        ]);
+        assert_eq!(limits.len(), 1);
+        assert_eq!(
+            (limits[0].label.as_str(), limits[0].used_percent, limits[0].reset.as_deref()),
+            ("All", 17, Some("sun 4:00 am"))
         );
     }
 
