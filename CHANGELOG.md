@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.0.1 (2026-10-12)
+
+### Fixed
+- A subscription user could show as "Anthropic API" when an API key from an earlier Console login was still in `~/.claude/config.json`. A subscription plan on the signed-in account now counts as a subscription login.
+- Usage limits from Claude Desktop were no longer read: its usage button now says "Weekly · all models: 17%" instead of "6% of 5-hour limit". Both formats are read.
+
 ## v4.0.0 (2026-09-27)
 
 A new interface for the tray menu and the settings window.
