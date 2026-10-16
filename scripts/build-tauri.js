@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -33,5 +35,15 @@ if (process.platform !== 'win32') {
   process.exit(1);
 }
 
-run(tauriBin(), ['build', '--bundles', 'nsis']);
+const args = ['build', '--bundles', 'nsis'];
+if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
+  // Without the updater key, skip the .sig instead of failing after the
+  // installer is built. The release workflow sets the key and checks the .sig.
+  const override = path.join(os.tmpdir(), 'claude-rpc-unsigned.conf.json');
+  fs.writeFileSync(override, JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
+  console.warn('[build] TAURI_SIGNING_PRIVATE_KEY is not set: building without the updater signature.');
+  args.push('--config', `"${override}"`);
+}
+
+run(tauriBin(), args);
 run(process.execPath, [path.join(ROOT, 'scripts', 'export-tauri-binary.js')]);
