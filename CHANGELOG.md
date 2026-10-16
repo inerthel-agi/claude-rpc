@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.0.2 (2026-10-16)
+
+### Fixed
+- The 5-hour limit and its chart disappeared once Claude Code's sign-in token expired, about 8 hours after Claude Code was last used (for example while working in Claude Desktop or with agents on an API key). Claude RPC now renews the token the way Claude Code does and saves it back to `~/.claude/.credentials.json`.
+
+### Changed
+- Local builds without `TAURI_SIGNING_PRIVATE_KEY` now skip the updater signature instead of failing.
+
 ## v4.0.1 (2026-10-12)
 
 ### Fixed

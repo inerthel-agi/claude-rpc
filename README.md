@@ -20,7 +20,7 @@ To build from source:
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_4.0.1_x64-setup.exe`: installer.
+- `Claude.RPC_4.0.2_x64-setup.exe`: installer.
 - `claude-rpc.exe`: portable executable.
 
 Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
