@@ -478,7 +478,9 @@ pub(crate) enum OAuthFetchError {
 }
 
 pub(crate) fn fetch_oauth_usage() -> Result<OAuthUsage, OAuthFetchError> {
-    let token = read_oauth_access_token().ok_or(OAuthFetchError::NoToken)?;
+    let token = read_oauth_access_token()
+        .or_else(refresh_oauth_token)
+        .ok_or(OAuthFetchError::NoToken)?;
     let response = ureq::get(OAUTH_USAGE_URL)
         .timeout(std::time::Duration::from_secs(8))
         .set("Authorization", &format!("Bearer {token}"))
@@ -509,6 +511,70 @@ pub(crate) fn read_oauth_access_token() -> Option<String> {
         }
     }
     Some(token.to_string())
+}
+
+// Claude Code's own OAuth client and token endpoint: the token belongs to it.
+const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+// Claude Code renews its token (~8 h) only while it runs, so days spent in
+// Desktop or on API-key agents leave it expired and the 5-hour bucket gone.
+// Renew it the way Claude Code does and write it back: a used refresh token
+// stops working, so Claude Code must get the new one.
+fn refresh_oauth_token() -> Option<String> {
+    let path = claude_dir().join(".credentials.json");
+    let read = || -> Option<Value> {
+        let raw = fs::read_to_string(&path).ok()?;
+        serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()
+    };
+    let oauth = read()?.get("claudeAiOauth")?.clone();
+    let refresh_token = oauth.get("refreshToken")?.as_str()?.to_string();
+    let mut body = json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": OAUTH_CLIENT_ID,
+    });
+    if let Some(scopes) = oauth.get("scopes").and_then(Value::as_array) {
+        let scope = scopes.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+        if !scope.is_empty() {
+            body["scope"] = scope.join(" ").into();
+        }
+    }
+    let response: Value = ureq::post(OAUTH_TOKEN_URL)
+        .timeout(std::time::Duration::from_secs(10))
+        .set("User-Agent", "claude-rpc")
+        .send_json(body)
+        .ok()?
+        .into_json()
+        .ok()?;
+    // Re-read right before writing: Claude Code may have renewed it meanwhile.
+    let mut credentials = read()?;
+    let token = apply_refreshed_token(&mut credentials, &response, &refresh_token, now_ms())?;
+    write_status(&path, &credentials).then_some(token)
+}
+
+// Stores a refresh response in the credentials, keeping every other field.
+// Skipped when the stored refresh token changed since the request was sent.
+fn apply_refreshed_token(
+    credentials: &mut Value,
+    response: &Value,
+    used_refresh_token: &str,
+    now: u64,
+) -> Option<String> {
+    let access_token = response.get("access_token")?.as_str()?;
+    let expires_in = response.get("expires_in")?.as_u64()?;
+    let oauth = credentials.get_mut("claudeAiOauth")?.as_object_mut()?;
+    if oauth.get("refreshToken").and_then(Value::as_str) != Some(used_refresh_token) {
+        return None;
+    }
+    let refresh_token = response
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .unwrap_or(used_refresh_token);
+    oauth.insert("accessToken".into(), access_token.into());
+    oauth.insert("refreshToken".into(), refresh_token.into());
+    oauth.insert("expiresAt".into(), (now + expires_in * 1_000).into());
+    Some(access_token.to_string())
 }
 
 pub(crate) fn parse_oauth_usage_response(body: &Value) -> Vec<UsageLimitEntry> {
@@ -801,6 +867,48 @@ mod tests {
             ),
             ("All", 17, Some("sun 4:00 am"))
         );
+    }
+
+    #[test]
+    fn applies_refreshed_oauth_token() {
+        let mut credentials = json!({
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 1,
+                "subscriptionType": "max"
+            },
+            "mcpOAuth": {"server": {}}
+        });
+        let response = json!({
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_in": 28800
+        });
+        assert_eq!(
+            apply_refreshed_token(&mut credentials, &response, "old-refresh", 1_000),
+            Some("new-access".into())
+        );
+        assert_eq!(
+            credentials,
+            json!({
+                "claudeAiOauth": {
+                    "accessToken": "new-access",
+                    "refreshToken": "new-refresh",
+                    "expiresAt": 28_801_000u64,
+                    "subscriptionType": "max"
+                },
+                "mcpOAuth": {"server": {}}
+            })
+        );
+
+        // Claude Code renewed it meanwhile: its newer token is kept.
+        let before = credentials.clone();
+        assert_eq!(
+            apply_refreshed_token(&mut credentials, &response, "old-refresh", 1_000),
+            None
+        );
+        assert_eq!(credentials, before);
     }
 
     #[test]
