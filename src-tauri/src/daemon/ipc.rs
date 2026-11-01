@@ -130,7 +130,7 @@ impl DiscordIpc {
             .and_then(|data| data.get("user"))
             .and_then(|user| user.get("username"))
             .and_then(Value::as_str)
-            .map(|value| sanitize_discord_user(value).unwrap_or_else(|| value.to_string()));
+            .and_then(sanitize_discord_user);
         Ok(client)
     }
 

@@ -175,8 +175,11 @@ function renderStatus(status) {
     heroReset.hidden = !reset;
 
     const fiveHour = main.label === '5h';
-    alertEl.hidden = !fiveHour || percent < 80;
-    alertText.textContent = t('tray.alert', { percent: percent >= 95 ? 95 : 80 });
+    // Same limit as the Windows alerts: the 5-hour session, else the weekly one.
+    alertEl.hidden = !(fiveHour || main.label === 'All') || percent < 80;
+    alertText.textContent = t(fiveHour ? 'tray.alert' : 'tray.alertWeekly', {
+      percent: percent >= 95 ? 95 : 80,
+    });
 
     const svg = fiveHour ? sparkline(status.history5h) : null;
     chart.hidden = !svg;

@@ -74,20 +74,28 @@ pub(super) fn detect_plan() -> Option<String> {
     })
 }
 
+// Max 20x is shown as Claude Ultra (no 5-hour limit), Max 5x as Claude Max.
 pub(super) fn plan_label(kind: &str, tier: Option<&str>) -> Option<String> {
     let kind = kind.trim().to_ascii_lowercase();
     let tier = tier.unwrap_or_default().to_ascii_lowercase();
     let label = match kind.trim_start_matches("claude_") {
         "free" => "Claude Free",
         "pro" => "Claude Pro",
-        "max" if tier.contains("20x") => "Claude Max (20x)",
-        "max" if tier.contains("5x") => "Claude Max (5x)",
+        "ultra" => ULTRA_PLAN,
+        "max" if tier.contains("20x") || tier.contains("ultra") => ULTRA_PLAN,
         "max" => "Claude Max",
         "team" => "Claude Team",
         "enterprise" => "Claude Enterprise",
         _ => return None,
     };
     Some(label.into())
+}
+
+pub(super) const ULTRA_PLAN: &str = "Claude Ultra";
+
+// Claude Ultra has no 5-hour limit, only the weekly ones.
+pub(super) fn plan_has_5h_limit(plan: Option<&str>) -> bool {
+    plan != Some(ULTRA_PLAN)
 }
 
 pub(super) fn is_present(value: Option<&str>) -> bool {
@@ -179,16 +187,14 @@ mod tests {
     #[test]
     fn labels_subscription_plans() {
         for (kind, tier, expected) in [
+            ("max", Some("default_claude_max_5x"), Some("Claude Max")),
+            ("max", Some("default_claude_max_20x"), Some("Claude Ultra")),
             (
-                "max",
-                Some("default_claude_max_5x"),
-                Some("Claude Max (5x)"),
+                "claude_max",
+                Some("default_claude_ultra"),
+                Some("Claude Ultra"),
             ),
-            (
-                "max",
-                Some("default_claude_max_20x"),
-                Some("Claude Max (20x)"),
-            ),
+            ("ultra", None, Some("Claude Ultra")),
             ("claude_max", None, Some("Claude Max")),
             ("pro", None, Some("Claude Pro")),
             ("free", None, Some("Claude Free")),
@@ -198,5 +204,8 @@ mod tests {
         ] {
             assert_eq!(plan_label(kind, tier).as_deref(), expected);
         }
+        assert!(!plan_has_5h_limit(Some("Claude Ultra")));
+        assert!(plan_has_5h_limit(Some("Claude Max")));
+        assert!(plan_has_5h_limit(None));
     }
 }

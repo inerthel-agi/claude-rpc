@@ -91,7 +91,7 @@ pub(super) fn build_status(
     })
 }
 
-// True when the file now holds alue.
+// True when the file now holds `value`.
 pub(super) fn write_status(path: &Path, value: &Value) -> bool {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -115,14 +115,14 @@ mod tests {
             client: ClientType::Desktop,
             mode: Some("Code".into()),
             provider: "Subscription".into(),
-            plan: Some("Claude Max (5x)".into()),
+            plan: Some("Claude Max".into()),
             ..DetectionResult::default()
         };
         let status = build_status(&result, Some("inerthel"), &config);
         assert_eq!(status["claudeLine"], "Claude: Desktop (Code)");
         assert_eq!(
             status["providerLine"],
-            "Provider: Subscription (Claude Max (5x))"
+            "Provider: Subscription (Claude Max)"
         );
         assert_eq!(status["discordLine"], "Discord: Connected (inerthel)");
 

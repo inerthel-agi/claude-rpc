@@ -450,6 +450,8 @@ fn main() {
             create_tray(app)?;
             spawn_update_check(app.handle().clone());
             spawn_status_watcher(app.handle().clone());
+            #[cfg(windows)]
+            std::thread::spawn(repair_start_on_windows);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -471,7 +473,7 @@ fn spawn_update_check(app: tauri::AppHandle) {
 const TRAY_ID: &str = "main";
 
 // Every 2 s: refresh the tray icon tooltip from status.txt and raise the
-// 5-hour usage notifications. Runs beside the daemon; reads files only.
+// usage notifications. Runs beside the daemon; reads files only.
 fn spawn_status_watcher(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut alerts = alerts::AlertState::default();
@@ -498,9 +500,9 @@ fn spawn_status_watcher(app: tauri::AppHandle) {
                 last_tooltip = tooltip;
             }
 
-            if let Some(percent) = alerts::five_hour_percent(&status) {
-                for alert in alerts.update(percent, &config) {
-                    let (title, body) = alerts::alert_text(alert, percent, french);
+            if let Some((label, percent)) = alerts::alert_limit(&status) {
+                for alert in alerts.update(label, percent, &config) {
+                    let (title, body) = alerts::alert_text(alert, label, percent, french);
                     let _ = app.notification().builder().title(title).body(body).show();
                 }
             }
@@ -709,6 +711,20 @@ fn startup_value_exists() -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+// The installed copy (beside its uninstaller) takes over a "Start with Windows"
+// entry left pointing at another copy, such as an old portable build: else
+// every login starts that older version, with the bugs it still has.
+#[cfg(windows)]
+fn repair_start_on_windows() {
+    let installed = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("uninstall.exe").is_file()))
+        .unwrap_or(false);
+    if installed && startup_value_exists() && !is_start_on_windows_enabled() {
+        let _ = set_start_on_windows(true);
+    }
 }
 
 #[cfg(not(windows))]

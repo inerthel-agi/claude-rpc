@@ -54,7 +54,8 @@ pub(crate) struct ClaudeConfig {
     pub(crate) private_projects: Vec<String>,
     #[serde(default)]
     pub(crate) hide_in_chat: bool,
-    // Windows notifications for the 5-hour session limit.
+    // Windows notifications for the 5-hour session limit (the weekly limit on
+    // plans without one).
     #[serde(default = "default_show_limits")]
     pub(crate) alert_80: bool,
     #[serde(default = "default_show_limits")]

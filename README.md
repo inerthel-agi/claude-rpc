@@ -20,7 +20,7 @@ To build from source:
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_4.0.2_x64-setup.exe`: installer.
+- `Claude.RPC_4.0.3_x64-setup.exe`: installer.
 - `claude-rpc.exe`: portable executable.
 
 Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
@@ -64,16 +64,16 @@ Settings are stored in `%USERPROFILE%\.claude-rpc\config.json`. The settings win
 | `dnd` | bool | `false` | Publish nothing while detection keeps running. |
 | `pauseUntilMs` | number | `0` | Publish nothing until this Unix time in milliseconds. |
 | `showProvider` | bool | `true` | Show the provider (Subscription, Anthropic API, AWS Bedrock, Google Vertex, Microsoft Azure). |
-| `showPlan` | bool | `true` | Replace "Subscription" with the Claude plan. Needs `showProvider`. |
+| `showPlan` | bool | `true` | Replace "Subscription" with the Claude plan (Free, Pro, Max, Ultra, Team, Enterprise). Max 20x is shown as Claude Ultra, Max 5x as Claude Max. Needs `showProvider`. |
 | `showEffort` | bool | `true` | Show the thinking effort. |
 | `showSessions` | bool | `false` | Show the number of open Claude Code sessions when there are two or more. |
 | `modelIcon` | bool | `false` | Use the model family icon as the small Discord image. |
 | `showLimits` | bool | `true` | Show usage limits on Discord. |
-| `showLimit5h`, `showLimitAll`, `showLimitFable` | bool | `true` | Choose the 5-hour, weekly and Fable weekly limits shown on Discord. |
+| `showLimit5h`, `showLimitAll`, `showLimitFable` | bool | `true` | Choose the 5-hour, weekly and Fable weekly limits shown on Discord. Claude Ultra has no 5-hour limit. |
 | `detailsTemplate`, `stateTemplate` | string | `""` | Custom Discord lines. Empty uses the default text. |
 | `privateProjects` | string list | `[]` | Folder names or paths whose sessions are never published. |
 | `hideInChat` | bool | `false` | Publish nothing while the Claude Desktop Chat tab is open. |
-| `alert80`, `alert95`, `alertReset` | bool | `true` | Windows notifications for the 5-hour session. |
+| `alert80`, `alert95`, `alertReset` | bool | `true` | Windows notifications for the 5-hour session, or the weekly limit on Claude Ultra. |
 | `language` | string | `auto` | Interface language: `auto`, `en` or `fr`. |
 | `buttons` | list | Claude, GitHub Repo | Up to two `{ "label", "url" }` buttons, sent in `watching` mode only. |
 

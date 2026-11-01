@@ -78,7 +78,7 @@ pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> St
     );
     let mut parts = vec![model];
     if config.show_provider {
-        // The plan ("Claude Max (5x)") replaces the generic "Subscription".
+        // The plan ("Claude Max") replaces the generic "Subscription".
         match result.plan.as_ref().filter(|_| config.show_plan) {
             Some(plan) => parts.push(plan.clone()),
             None => parts.push(result.provider.clone()),
@@ -341,7 +341,7 @@ mod tests {
             mode: Some("Code".into()),
             model: Some("Claude Opus 5.5 | High".into()),
             provider: "Subscription".into(),
-            plan: Some("Claude Max (5x)".into()),
+            plan: Some("Claude Max".into()),
             project_dir: Some(r"D:\work\claude-rpc".into()),
             limits: vec![UsageLimitEntry {
                 label: "5h".into(),
@@ -353,7 +353,7 @@ mod tests {
         };
         assert_eq!(
             render_template("{model} · {effort} | {plan} | 5h {limit5h}", &result).as_deref(),
-            Some("Claude Opus 5.5 · High | Claude Max (5x) | 5h 66%")
+            Some("Claude Opus 5.5 · High | Claude Max | 5h 66%")
         );
         assert_eq!(
             render_template("In {project} ({client}, {mode})", &result).as_deref(),

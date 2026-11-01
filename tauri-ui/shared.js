@@ -70,6 +70,7 @@
       'tray.credits': 'Usage credits',
       'alerts.title': 'Alerts',
       'alerts.hint': 'Windows notifications for the 5-hour session.',
+      'alerts.hintWeekly': 'Windows notifications for the weekly limit.',
       'alerts.80': 'At 80%',
       'alerts.95': 'At 95%',
       'alerts.reset': 'When it resets',
@@ -139,6 +140,7 @@
       'tray.last24h': 'Last 24 h',
       'tray.peak': 'Peak {percent}%',
       'tray.alert': 'Above {percent}% of your 5-hour session',
+      'tray.alertWeekly': 'Above {percent}% of your weekly limit',
       'tray.5h': '5-hour session',
       'tray.weekly': 'Weekly',
       'tray.fable': 'Fable weekly',
@@ -239,6 +241,7 @@
       'tray.credits': 'Crédits d’usage',
       'alerts.title': 'Alertes',
       'alerts.hint': 'Notifications Windows pour la session de 5 heures.',
+      'alerts.hintWeekly': 'Notifications Windows pour la limite hebdomadaire.',
       'alerts.80': 'À 80 %',
       'alerts.95': 'À 95 %',
       'alerts.reset': 'À la remise à zéro',
@@ -308,6 +311,7 @@
       'tray.last24h': '24 dernières heures',
       'tray.peak': 'Pic {percent} %',
       'tray.alert': 'Plus de {percent} % de ta session de 5 h',
+      'tray.alertWeekly': 'Plus de {percent} % de ta limite hebdomadaire',
       'tray.5h': 'Session de 5 h',
       'tray.weekly': 'Semaine',
       'tray.fable': 'Fable (semaine)',
@@ -395,7 +399,7 @@
   const locale = () => (language === 'fr' ? 'fr-FR' : 'en-GB');
 
   // Status lines come from status.txt, e.g. "Discord: Connected (inerthel)",
-  // "Claude: Desktop (Code)", "Provider: Subscription (Claude Max (5x))".
+  // "Claude: Desktop (Code)", "Provider: Subscription (Claude Max)".
   function inner(line, prefix) {
     if (!line || !line.startsWith(prefix)) return '';
     const rest = line.slice(prefix.length).trim();
@@ -431,6 +435,9 @@
     const plan = inner(line, 'Provider:') || line.replace(/^Provider:\s*/, '').split(' (')[0];
     return plan && plan !== 'Unknown' ? plan : '';
   }
+
+  // Claude Ultra has no 5-hour limit, only the weekly ones.
+  const hasFiveHourLimit = (status) => planOf(status) !== 'Claude Ultra';
 
   function discordUser(status) {
     const line = (status && status.discordLine) || '';
@@ -585,6 +592,7 @@
     describeClient,
     describeModel,
     planOf,
+    hasFiveHourLimit,
     discordUser,
     formatReset,
     resetParts,

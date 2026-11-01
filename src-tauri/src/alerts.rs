@@ -1,4 +1,4 @@
-// Tray icon tooltip and 5-hour usage notifications, derived from the daemon's
+// Tray icon tooltip and usage notifications, derived from the daemon's
 // status.txt by the status watcher in main.rs.
 
 use serde_json::Value;
@@ -12,19 +12,22 @@ pub(crate) enum Alert {
     Reset,
 }
 
-// Remembers which threshold was already announced for the current 5-hour
-// window, so each notification fires once per window.
+// Remembers which threshold was already announced for the current window of
+// the followed limit, so each notification fires once per window.
 #[derive(Debug, Default)]
 pub(crate) struct AlertState {
+    label: String,
     announced: u8,
     last_percent: Option<u8>,
 }
 
 impl AlertState {
-    pub(crate) fn update(&mut self, percent: u8, config: &ClaudeConfig) -> Vec<Alert> {
-        // First reading after the app starts (login, restart after an update):
-        // note the thresholds already passed without notifying them again.
-        if self.last_percent.is_none() {
+    pub(crate) fn update(&mut self, label: &str, percent: u8, config: &ClaudeConfig) -> Vec<Alert> {
+        // First reading after the app starts (login, restart after an update),
+        // or another limit is followed (plan change): note the thresholds
+        // already passed without notifying them again.
+        if self.last_percent.is_none() || self.label != label {
+            self.label = label.to_string();
             self.announced = match percent {
                 95.. => 95,
                 80.. => 80,
@@ -59,7 +62,27 @@ impl AlertState {
     }
 }
 
-pub(crate) fn alert_text(alert: Alert, percent: u8, french: bool) -> (String, String) {
+pub(crate) fn alert_text(alert: Alert, label: &str, percent: u8, french: bool) -> (String, String) {
+    if label == "All" {
+        return match (alert, french) {
+            (Alert::Reset, false) => (
+                "Weekly limit reset".into(),
+                "Your weekly Claude limit is back to 0%.".into(),
+            ),
+            (Alert::Reset, true) => (
+                "Limite hebdomadaire remise à zéro".into(),
+                "Ta limite hebdomadaire Claude est revenue à 0 %.".into(),
+            ),
+            (_, false) => (
+                format!("Weekly limit at {percent}%"),
+                "Claude usage is getting close to the weekly limit.".into(),
+            ),
+            (_, true) => (
+                format!("Limite hebdomadaire à {percent} %"),
+                "Ton usage de Claude approche de la limite hebdomadaire.".into(),
+            ),
+        };
+    }
     match (alert, french) {
         (Alert::Reset, false) => (
             "5-hour session reset".into(),
@@ -80,15 +103,18 @@ pub(crate) fn alert_text(alert: Alert, percent: u8, french: bool) -> (String, St
     }
 }
 
-pub(crate) fn five_hour_percent(status: &Value) -> Option<u8> {
-    status
-        .get("limits")?
-        .as_array()?
-        .iter()
-        .find(|entry| entry.get("label").and_then(Value::as_str) == Some("5h"))?
-        .get("usedPercent")?
-        .as_u64()
-        .map(|value| value.min(100) as u8)
+// The limit the alerts follow: the 5-hour session, else the weekly limit
+// (Claude Ultra has no 5-hour limit). Returns its label and percentage.
+pub(crate) fn alert_limit(status: &Value) -> Option<(&'static str, u8)> {
+    let limits = status.get("limits")?.as_array()?;
+    ["5h", "All"].into_iter().find_map(|label| {
+        let percent = limits
+            .iter()
+            .find(|entry| entry.get("label").and_then(Value::as_str) == Some(label))?
+            .get("usedPercent")?
+            .as_u64()?;
+        Some((label, percent.min(100) as u8))
+    })
 }
 
 // Windows caps tray tooltips at 127 characters.
@@ -165,22 +191,28 @@ mod tests {
     fn announces_each_threshold_once_per_window() {
         let config = ClaudeConfig::default();
         let mut state = AlertState::default();
-        assert!(state.update(40, &config).is_empty());
-        assert_eq!(state.update(81, &config), [Alert::Above80]);
-        assert!(state.update(85, &config).is_empty());
-        assert_eq!(state.update(96, &config), [Alert::Above95]);
-        assert!(state.update(99, &config).is_empty());
+        assert!(state.update("5h", 40, &config).is_empty());
+        assert_eq!(state.update("5h", 81, &config), [Alert::Above80]);
+        assert!(state.update("5h", 85, &config).is_empty());
+        assert_eq!(state.update("5h", 96, &config), [Alert::Above95]);
+        assert!(state.update("5h", 99, &config).is_empty());
         // The window resets: one reset notice, then thresholds re-arm.
-        assert_eq!(state.update(2, &config), [Alert::Reset]);
-        assert_eq!(state.update(83, &config), [Alert::Above80]);
+        assert_eq!(state.update("5h", 2, &config), [Alert::Reset]);
+        assert_eq!(state.update("5h", 83, &config), [Alert::Above80]);
 
         let quiet = ClaudeConfig {
             alert_80: false,
             ..ClaudeConfig::default()
         };
         let mut state = AlertState::default();
-        assert!(state.update(40, &quiet).is_empty());
-        assert!(state.update(82, &quiet).is_empty());
+        assert!(state.update("5h", 40, &quiet).is_empty());
+        assert!(state.update("5h", 82, &quiet).is_empty());
+
+        // Following another limit starts over: no reset notice for the drop.
+        let mut state = AlertState::default();
+        assert!(state.update("5h", 60, &config).is_empty());
+        assert!(state.update("All", 10, &config).is_empty());
+        assert_eq!(state.update("All", 81, &config), [Alert::Above80]);
     }
 
     #[test]
@@ -188,9 +220,9 @@ mod tests {
         let config = ClaudeConfig::default();
         let mut state = AlertState::default();
         // The app starts while the session is already at 85%.
-        assert!(state.update(85, &config).is_empty());
-        assert!(state.update(86, &config).is_empty());
-        assert_eq!(state.update(96, &config), [Alert::Above95]);
+        assert!(state.update("5h", 85, &config).is_empty());
+        assert!(state.update("5h", 86, &config).is_empty());
+        assert_eq!(state.update("5h", 96, &config), [Alert::Above95]);
     }
 
     #[test]
@@ -207,7 +239,14 @@ mod tests {
             tray_tooltip(&status, false),
             "Claude RPC\nOpus 5.5 · High\n5h 66% · Weekly 24%"
         );
-        assert_eq!(five_hour_percent(&status), Some(66));
+        assert_eq!(alert_limit(&status), Some(("5h", 66)));
+        // Claude Ultra: no 5-hour limit, the alerts follow the weekly one.
+        let ultra = json!({"limits": [{"label": "All", "usedPercent": 24}]});
+        assert_eq!(alert_limit(&ultra), Some(("All", 24)));
+        assert_eq!(
+            alert_text(Alert::Above80, "All", 81, false).0,
+            "Weekly limit at 81%"
+        );
         let off = json!({"claudeLine": "Claude: Off", "limits": []});
         assert_eq!(
             tray_tooltip(&off, true),

@@ -5,6 +5,7 @@ const {
   tBold,
   describeClient,
   planOf,
+  hasFiveHourLimit,
   discordUser,
   resetParts,
   formatTime,
@@ -51,6 +52,7 @@ const fields = {
   alert80Toggle: $('#alert-80-toggle'),
   alert95Toggle: $('#alert-95-toggle'),
   alertResetToggle: $('#alert-reset-toggle'),
+  alertsHint: $('#alerts-hint'),
   hideChatToggle: $('#hide-chat-toggle'),
   startupToggle: $('#startup-toggle'),
   privateProjects: $('#private-projects'),
@@ -579,6 +581,13 @@ function renderUsage(status) {
   fields.usagePlan.textContent = plan;
   fields.usagePlan.hidden = !plan;
   fields.usagePlan.parentElement.hidden = !plan;
+
+  // Claude Ultra has no 5-hour limit: no Discord toggle for it, and the
+  // alerts follow the weekly limit (alerts.rs alert_limit).
+  const fiveHour = hasFiveHourLimit(status);
+  fields.limit5hToggle.hidden = !fiveHour;
+  fields.alertsHint.dataset.i18n = fiveHour ? 'alerts.hint' : 'alerts.hintWeekly';
+  fields.alertsHint.textContent = t(fields.alertsHint.dataset.i18n);
 
   const limits = Array.isArray(status.limits) ? status.limits : [];
   fields.usageEmpty.hidden = limits.length > 0;

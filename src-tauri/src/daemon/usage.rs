@@ -253,9 +253,12 @@ pub(crate) fn visible_limit_labels(visibility: LimitVisibility) -> Vec<&'static 
     labels
 }
 
+// `has_5h` is false on plans without a 5-hour limit (Claude Ultra): a value
+// left in the cache from an earlier plan, or read from Desktop, is dropped.
 pub(crate) fn current_limits(
     machine: &mut StateMachine,
     detected_limits: &[UsageLimitEntry],
+    has_5h: bool,
 ) -> Vec<UsageLimitEntry> {
     let now = now_ms();
     // Load the cache once per run, not on every tick while nothing is known.
@@ -297,7 +300,10 @@ pub(crate) fn current_limits(
         machine.limits_cache_written_at = now;
     }
 
-    let fresh = fresh_limit_entries(&machine.cached_limits, now);
+    let mut fresh = fresh_limit_entries(&machine.cached_limits, now);
+    if !has_5h {
+        fresh.retain(|entry| entry.label != "5h");
+    }
     record_usage_history(machine, &fresh, now);
     fresh
 }
@@ -368,6 +374,9 @@ const OAUTH_USAGE_BETA: &str = "oauth-2025-04-20";
 const OAUTH_USAGE_IDLE_POLL_MS: u64 = 10 * 60 * 1000;
 const OAUTH_USAGE_ACTIVITY_POLL_MS: u64 = 60 * 1000;
 const OAUTH_USAGE_BACKOFF_MS: u64 = 5 * 60 * 1000;
+// Signed out, or a refresh token Claude Code no longer accepts: retrying every
+// minute would only hammer the token endpoint. Refresh limits skips the wait.
+const OAUTH_SIGNED_OUT_BACKOFF_MS: u64 = 10 * 60 * 1000;
 
 pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> Option<OAuthUsage> {
     // The HTTP call runs on its own thread (up to 8 s): the daemon loop only
@@ -378,11 +387,10 @@ pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> 
             machine.oauth_inflight = None;
             return match result {
                 Ok(usage) => Some(usage),
-                Err(OAuthFetchError::RateLimited) => {
-                    machine.oauth_backoff_until_ms = now + OAUTH_USAGE_BACKOFF_MS;
+                Err(error) => {
+                    machine.oauth_backoff_until_ms = now + backoff_after(&error);
                     None
                 }
-                Err(_) => None,
             };
         }
         Some(Err(TryRecvError::Empty)) => return None,
@@ -470,33 +478,58 @@ pub(crate) fn fresh_credits(machine: &StateMachine, now: u64) -> Option<UsageCre
         .filter(|credits| now.saturating_sub(credits.updated_at_ms) <= LIMITS_DISPLAY_TTL_MS)
 }
 
+#[derive(Debug)]
 pub(crate) enum OAuthFetchError {
     NoToken,
+    Unauthorized,
     Network,
     RateLimited,
     Parse,
+}
+
+// How long to wait before the next usage request after a failure.
+fn backoff_after(error: &OAuthFetchError) -> u64 {
+    match error {
+        OAuthFetchError::RateLimited => OAUTH_USAGE_BACKOFF_MS,
+        OAuthFetchError::NoToken | OAuthFetchError::Unauthorized => OAUTH_SIGNED_OUT_BACKOFF_MS,
+        OAuthFetchError::Network | OAuthFetchError::Parse => 0,
+    }
 }
 
 pub(crate) fn fetch_oauth_usage() -> Result<OAuthUsage, OAuthFetchError> {
     let token = read_oauth_access_token()
         .or_else(refresh_oauth_token)
         .ok_or(OAuthFetchError::NoToken)?;
-    let response = ureq::get(OAUTH_USAGE_URL)
-        .timeout(std::time::Duration::from_secs(8))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("anthropic-beta", OAUTH_USAGE_BETA)
-        .set("User-Agent", "claude-rpc")
-        .call();
-    let body = match response {
-        Ok(resp) => resp.into_string().map_err(|_| OAuthFetchError::Parse)?,
-        Err(ureq::Error::Status(429, _)) => return Err(OAuthFetchError::RateLimited),
-        Err(_) => return Err(OAuthFetchError::Network),
+    let body = match request_oauth_usage(&token) {
+        // Rejected before its stored expiry (revoked, or rotated by another
+        // Claude Code): renew it once and retry, else the 5-hour bucket stays
+        // gone until Claude Code is used again.
+        Err(OAuthFetchError::Unauthorized) => {
+            let token = refresh_oauth_token().ok_or(OAuthFetchError::Unauthorized)?;
+            request_oauth_usage(&token)?
+        }
+        other => other?,
     };
     let value: Value = serde_json::from_str(&body).map_err(|_| OAuthFetchError::Parse)?;
     Ok(OAuthUsage {
         limits: parse_oauth_usage_response(&value),
         credits: parse_extra_usage(&value),
     })
+}
+
+fn request_oauth_usage(token: &str) -> Result<String, OAuthFetchError> {
+    let response = ureq::get(OAUTH_USAGE_URL)
+        .timeout(std::time::Duration::from_secs(8))
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("anthropic-beta", OAUTH_USAGE_BETA)
+        .set("User-Agent", "claude-rpc")
+        .call();
+    match response {
+        Ok(resp) => resp.into_string().map_err(|_| OAuthFetchError::Parse),
+        Err(ureq::Error::Status(429, _)) => Err(OAuthFetchError::RateLimited),
+        Err(ureq::Error::Status(401, _)) => Err(OAuthFetchError::Unauthorized),
+        Err(_) => Err(OAuthFetchError::Network),
+    }
 }
 
 pub(crate) fn read_oauth_access_token() -> Option<String> {
@@ -866,6 +899,56 @@ mod tests {
                 limits[0].reset.as_deref()
             ),
             ("All", 17, Some("sun 4:00 am"))
+        );
+    }
+
+    #[test]
+    fn backs_off_when_signed_out() {
+        assert_eq!(
+            backoff_after(&OAuthFetchError::Unauthorized),
+            OAUTH_SIGNED_OUT_BACKOFF_MS
+        );
+        assert_eq!(
+            backoff_after(&OAuthFetchError::NoToken),
+            OAUTH_SIGNED_OUT_BACKOFF_MS
+        );
+        assert_eq!(
+            backoff_after(&OAuthFetchError::RateLimited),
+            OAUTH_USAGE_BACKOFF_MS
+        );
+        // A network blip retries at the normal cadence.
+        assert_eq!(backoff_after(&OAuthFetchError::Network), 0);
+    }
+
+    #[test]
+    fn drops_the_5h_bucket_without_one() {
+        let now = now_ms();
+        let entry = |label: &str| UsageLimitEntry {
+            label: label.into(),
+            used_percent: 10,
+            reset: None,
+            updated_at_ms: now,
+        };
+        // Nothing new is detected and the history has a fresh sample, so this
+        // test neither requests OAuth nor writes the user's cache files.
+        let mut machine = StateMachine {
+            limits_cache_loaded: true,
+            history_loaded: true,
+            history_5h: vec![[now, 10]],
+            oauth_backoff_until_ms: u64::MAX,
+            cached_limits: vec![entry("5h"), entry("All")],
+            ..StateMachine::default()
+        };
+        let labels = |limits: Vec<UsageLimitEntry>| {
+            limits
+                .into_iter()
+                .map(|entry| entry.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(current_limits(&mut machine, &[], false)), ["All"]);
+        assert_eq!(
+            labels(current_limits(&mut machine, &[], true)),
+            ["5h", "All"]
         );
     }
 

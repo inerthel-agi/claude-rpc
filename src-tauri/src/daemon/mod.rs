@@ -336,9 +336,13 @@ fn detect(
     // On platforms with process detection, neither a recently written log nor
     // the idle grace cache is evidence that a Claude client is still running.
     if cfg!(windows) && !desktop_found && code_count == 0 {
-        // Usage limits stay tracked for the tray card even with Claude closed.
-        let limits = current_limits(machine, &[]);
+        // Usage limits and the plan stay tracked for the tray card even with
+        // Claude closed.
+        let (provider, plan) = cached_provider(machine);
+        let limits = current_limits(machine, &[], plan_has_5h_limit(plan.as_deref()));
         return DetectionResult {
+            provider,
+            plan,
             limits,
             history_5h: machine.history_5h.clone(),
             credits: fresh_credits(machine, now_ms()),
@@ -391,7 +395,8 @@ fn detect(
             machine.last_session_mtime = mtime;
         }
     }
-    let limits = current_limits(machine, &desktop.limits);
+    let (provider, plan) = cached_provider(machine);
+    let limits = current_limits(machine, &desktop.limits, plan_has_5h_limit(plan.as_deref()));
     let limits_line = if limit_visibility.enabled {
         limits_line(&limits, limit_visibility)
     } else {
@@ -403,7 +408,6 @@ fn detect(
         None
     };
 
-    let (provider, plan) = cached_provider(machine);
     let mut result = DetectionResult {
         client,
         mode: desktop.mode,
@@ -457,6 +461,7 @@ fn detect(
 
     DetectionResult {
         provider: result.provider,
+        plan: result.plan,
         limits: result.limits,
         history_5h: result.history_5h,
         credits: result.credits,

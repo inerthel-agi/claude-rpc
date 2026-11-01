@@ -1,5 +1,16 @@
 # Changelog
 
+## v4.0.3 (2026-11-01)
+
+### Changed
+- **Plan names**: Claude Max 20x is shown as **Claude Ultra** and Claude Max 5x as **Claude Max**. Claude Ultra has no 5-hour limit: the 5-hour bar, chart and Discord toggle are hidden, and usage alerts follow the weekly limit instead.
+- The plan stays in the tray menu while Claude is closed.
+
+### Fixed
+- Start with Windows could keep launching an old portable copy of Claude RPC after the installed version was updated, bringing back bugs already fixed (the 5-hour limit disappearing after the sign-in token expired). The installed copy now takes the startup entry back.
+- A sign-in token rejected before its expiry date (revoked, or renewed by another Claude Code) left the 5-hour limit missing until Claude Code was used again. It is now renewed once and the request retried.
+- While signed out, or with a sign-in Claude no longer accepts, the usage request was retried every minute; it now waits 10 minutes (Refresh skips the wait).
+
 ## v4.0.2 (2026-10-16)
 
 ### Fixed
