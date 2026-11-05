@@ -1,5 +1,21 @@
 # Changelog
 
+## v4.0.4 (2026-11-05)
+
+### Added
+- **Session name and git branch**: two options in Presence > Details add the Claude Code session title and its git branch to the first Discord line, for example "Claude Desktop (Code) · Fix login · main". Both are off by default. The tray menu shows them under the model. They are read from the session log and are only shown while a coding session is active, not in the Chat tab.
+- **UI style** (Settings > General > Appearance): switch the settings window and the tray menu between Classic, **Discord Bento** (Discord palette, Nitro banner on the live preview and the tray's usage card, tiles), **Claude Code TUI** (monospace, carbon background, segmented terminal gauges), **Split Studio** (two columns with the Discord preview and the 5-hour and weekly gauges pinned on the right, compact tray), **Fluent Mica** (Windows 11 surfaces, 8 px corners, vertical indicator on the current page, native-style tray flyout) and **Orbit** (near-black canvas lit by a soft blue glow, outlined cards, pill controls). Each style has a dark and a light version and applies at once to both windows.
+- **Tray menu sections** (Settings > General > Tray menu): hide what you do not use in the tray menu: session name, 5-hour session, 24-hour chart, weekly limits, usage credits, pause, activity type, Open Claude Desktop, Launch Claude Code, updates and the Discord status. Settings and Quit always stay.
+- **OLED theme** next to Dark, System and Light: true black backgrounds for OLED screens, in every UI style and in the tray menu.
+- **Animations**: pages and their blocks slide in, gauges fill and the 24-hour chart draws itself, the tray menu cascades open, colours crossfade when the style or theme changes, and each style has its own touches (animated Nitro gradient, blinking terminal cursor and typed-in lines, pinned column sliding in, Windows 11 flyout and page indicator). Everything stops when Windows "Show animations" is off.
+- **Template variables** `{session}`, `{branch}`, `{reset5h}` and `{resetWeekly}`. The reset variables give the time left before the limit resets, such as "1h 40m".
+
+### Fixed
+- With several Claude Code sessions working at once, the model, project and timer followed whichever session wrote to its log last and could switch back and forth. The session shown is now the one you last typed a message in.
+- **Private projects** ignored Claude Desktop worktree sessions (`<project>\.claude\worktrees\<name>`): such a session was never detected, so another session could be published while you worked in a private project. A worktree session now counts as its project, and `{project}` shows the project name.
+- **Private projects** did not match a folder whose name differs only by an accented capital letter ("écoles" vs "Écoles").
+- **Private projects** with several Claude Code sessions open: only the most recently written session was checked, so a session in a private folder could run while another session's activity was published. Nothing is published now while any session in a private folder was active in the last 10 minutes.
+
 ## v4.0.3 (2026-11-01)
 
 ### Changed

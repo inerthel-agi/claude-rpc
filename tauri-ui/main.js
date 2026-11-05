@@ -14,6 +14,9 @@ const {
   describeCredits,
   sparkline,
   peakOf,
+  DESIGN_KEY,
+  readDesign,
+  setDesign,
 } = window.RpcShared;
 
 const presets = {
@@ -25,7 +28,8 @@ const presets = {
 // Variables accepted by the Discord text templates (presence.rs render_template).
 const TEMPLATE_VARS = [
   '{model}', '{effort}', '{plan}', '{provider}', '{limits}', '{limit5h}',
-  '{limitWeekly}', '{limitFable}', '{sessions}', '{project}', '{client}', '{mode}',
+  '{limitWeekly}', '{limitFable}', '{reset5h}', '{resetWeekly}', '{sessions}', '{project}',
+  '{session}', '{branch}', '{client}', '{mode}',
 ];
 const LIMIT_KEYS = { '5h': 'tray.5h', All: 'tray.weekly', Fable: 'tray.fable' };
 const PAGES = ['presence', 'usage', 'privacy', 'buttons', 'general', 'about'];
@@ -45,6 +49,8 @@ const fields = {
   effortToggle: $('#effort-toggle'),
   sessionsToggle: $('#sessions-toggle'),
   modelIconToggle: $('#model-icon-toggle'),
+  sessionNameToggle: $('#session-name-toggle'),
+  branchToggle: $('#branch-toggle'),
   limitsToggle: $('#limits-toggle'),
   limit5hToggle: $('#limit-5h-toggle'),
   limitAllToggle: $('#limit-all-toggle'),
@@ -102,7 +108,15 @@ const fields = {
   usageLimits: $('#usage-limits'),
   usageEmpty: $('#usage-empty'),
   themeButtons: [...document.querySelectorAll('[data-theme-option]')],
+  design: $('#design'),
+  pinPreviewSlot: $('#pin-preview-slot'),
+  pinPlan: $('#pin-plan'),
+  pinLimits: $('#pin-limits'),
+  pinEmpty: $('#pin-empty'),
 };
+
+// Where the Discord preview lives outside Split Studio, to put it back.
+const previewHome = { parent: fields.preview.parentElement, next: fields.preview.nextSibling };
 
 // Two-state controls (switches and check chips) keep their state in
 // data-enabled; the look comes from the .active class.
@@ -114,6 +128,8 @@ const toggleBindings = [
   [fields.effortToggle, 'showEffort', true],
   [fields.sessionsToggle, 'showSessions', false],
   [fields.modelIconToggle, 'modelIcon', false],
+  [fields.sessionNameToggle, 'showSessionName', false],
+  [fields.branchToggle, 'showBranch', false],
   [fields.limitsToggle, 'showLimits', true],
   [fields.limit5hToggle, 'showLimit5h', true],
   [fields.limitAllToggle, 'showLimitAll', true],
@@ -249,6 +265,10 @@ function setLanguage(setting) {
   renderRefreshButton();
   renderDiagnosticMessage();
   renderStatus(currentStatus);
+  // Split Studio shows the navigation as icons: the label becomes a tooltip.
+  fields.navItems.forEach((item) => {
+    item.title = item.textContent.trim();
+  });
 }
 
 // Controls that only make sense when another one is on.
@@ -379,6 +399,7 @@ async function load() {
       /* storage unavailable */
     }
     applyTheme(theme);
+    applyDesign(readDesign());
     await invoke('start_daemon');
     const config = await invoke('load_config');
     lastConfigJson = JSON.stringify(config);
@@ -558,6 +579,7 @@ async function refreshStatus() {
 function renderStatus(status) {
   renderSidebar(status);
   renderUsage(status);
+  renderPin(status);
   renderCredits(status.credits);
   updatePreview();
 }
@@ -576,6 +598,54 @@ function renderSidebar(status) {
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
 
+// One usage gauge: label, percent, bar and reset time.
+function limitBlock(limit) {
+  const percent = clampPercent(limit.usedPercent);
+  const block = document.createElement('div');
+  block.className = 'limit';
+  const head = document.createElement('div');
+  head.className = 'limit-head';
+  const label = document.createElement('span');
+  label.textContent = LIMIT_KEYS[limit.label] ? t(LIMIT_KEYS[limit.label]) : limit.label;
+  const value = document.createElement('b');
+  const used = document.createElement('small');
+  used.textContent = t('usage.used');
+  value.append(`${percent}%`, used);
+  head.append(label, value);
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  const fill = document.createElement('i');
+  fill.style.width = `${percent}%`;
+  fill.classList.toggle('warn', percent >= 80 && percent < 95);
+  fill.classList.toggle('danger', percent >= 95);
+  bar.append(fill);
+  block.append(head, bar);
+  const reset = resetParts(limit.reset);
+  if (reset) {
+    const meta = document.createElement('div');
+    meta.className = 'limit-meta';
+    const relative = document.createElement('span');
+    relative.textContent = capitalize(reset.relative);
+    const absolute = document.createElement('span');
+    absolute.textContent = reset.absolute;
+    meta.append(relative, absolute);
+    block.append(meta);
+  }
+  return block;
+}
+
+// Split Studio's pinned column: the 5-hour and weekly gauges.
+function renderPin(status) {
+  const plan = planOf(status);
+  fields.pinPlan.textContent = plan;
+  fields.pinPlan.hidden = !plan;
+  const limits = (Array.isArray(status.limits) ? status.limits : []).filter((limit) =>
+    ['5h', 'All'].includes(limit.label),
+  );
+  fields.pinEmpty.hidden = limits.length > 0;
+  fields.pinLimits.replaceChildren(...limits.map(limitBlock));
+}
+
 function renderUsage(status) {
   const plan = planOf(status);
   fields.usagePlan.textContent = plan;
@@ -593,36 +663,7 @@ function renderUsage(status) {
   fields.usageEmpty.hidden = limits.length > 0;
   fields.usageLimits.replaceChildren(
     ...limits.map((limit) => {
-      const percent = clampPercent(limit.usedPercent);
-      const block = document.createElement('div');
-      const head = document.createElement('div');
-      head.className = 'limit-head';
-      const label = document.createElement('span');
-      label.textContent = LIMIT_KEYS[limit.label] ? t(LIMIT_KEYS[limit.label]) : limit.label;
-      const value = document.createElement('b');
-      const used = document.createElement('small');
-      used.textContent = t('usage.used');
-      value.append(`${percent}%`, used);
-      head.append(label, value);
-      const bar = document.createElement('div');
-      bar.className = 'bar';
-      const fill = document.createElement('i');
-      fill.style.width = `${percent}%`;
-      fill.classList.toggle('warn', percent >= 80 && percent < 95);
-      fill.classList.toggle('danger', percent >= 95);
-      bar.append(fill);
-      block.append(head, bar);
-      const reset = resetParts(limit.reset);
-      if (reset) {
-        const meta = document.createElement('div');
-        meta.className = 'limit-meta';
-        const relative = document.createElement('span');
-        relative.textContent = capitalize(reset.relative);
-        const absolute = document.createElement('span');
-        absolute.textContent = reset.absolute;
-        meta.append(relative, absolute);
-        block.append(meta);
-      }
+      const block = limitBlock(limit);
       if (limit.label === '5h') {
         const svg = sparkline(status.history5h, 64);
         if (svg) {
@@ -897,6 +938,35 @@ fields.language.addEventListener('change', () => {
 fields.themeButtons.forEach((button) => {
   button.addEventListener('click', () => applyTheme(button.dataset.themeOption));
 });
+fields.design.addEventListener('change', () => applyDesign(fields.design.value));
+
+// Tray menu sections: checked = shown. Saved in localStorage for the tray.
+const traySectionChecks = [...document.querySelectorAll('[data-tray-section]')];
+function renderTraySections() {
+  const hidden = new Set(window.RpcShared.readTrayHidden());
+  traySectionChecks.forEach((check) => {
+    const shown = !hidden.has(check.dataset.traySection);
+    check.classList.toggle('active', shown);
+    check.setAttribute('aria-checked', String(shown));
+  });
+}
+traySectionChecks.forEach((check) => {
+  check.addEventListener('click', () => {
+    const hidden = new Set(window.RpcShared.readTrayHidden());
+    const id = check.dataset.traySection;
+    if (hidden.has(id)) hidden.delete(id);
+    else hidden.add(id);
+    window.RpcShared.writeTrayHidden([...hidden]);
+    renderTraySections();
+  });
+});
+renderTraySections();
+// Another window (or a second settings window) changed the style or theme.
+window.addEventListener('storage', (event) => {
+  if (event.key === DESIGN_KEY) applyDesign(readDesign());
+  if (event.key === window.RpcShared.TRAY_HIDDEN_KEY) renderTraySections();
+  if (event.key === 'claude-rpc-theme') applyTheme(event.newValue);
+});
 fields.presetButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const [label, url] = presets[button.dataset.preset];
@@ -919,10 +989,20 @@ systemTheme.addEventListener('change', () => {
   if (saved === 'system') applyTheme('system');
 });
 
+// Switches the whole window to a UI style. Split Studio pins the Discord
+// preview in its right column; the other styles keep it on the Presence page.
+function applyDesign(design) {
+  const safe = setDesign(design);
+  fields.design.value = safe;
+  if (safe === 'split') {
+    fields.pinPreviewSlot.append(fields.preview);
+  } else if (fields.preview.parentElement !== previewHome.parent) {
+    previewHome.parent.insertBefore(fields.preview, previewHome.next);
+  }
+}
+
 function applyTheme(theme) {
-  const safeTheme = ['dark', 'system', 'light'].includes(theme) ? theme : 'dark';
-  const resolved = safeTheme === 'system' ? (systemTheme.matches ? 'light' : 'dark') : safeTheme;
-  document.body.dataset.theme = resolved;
+  const safeTheme = window.RpcShared.setTheme(theme);
   fields.themeButtons.forEach((button) => {
     const active = button.dataset.themeOption === safeTheme;
     button.classList.toggle('active', active);

@@ -660,3 +660,847 @@ button:focus-visible {
 .credits .bar[hidden] {
   display: none;
 }
+
+/* Sections the user hid in Settings > General > Tray menu */
+.user-hidden {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* UI styles (body[data-design]), chosen in the settings window and   */
+/* shared through localStorage. Each mirrors its styles.css palette.  */
+/* ------------------------------------------------------------------ */
+
+/* ---------- Discord Bento ---------- */
+body[data-design='bento'] {
+  --surface: #1e1f22;
+  --raised: #2b2d31;
+  --input: #1e1f22;
+  --line: #3f4147;
+  --line-strong: #4e5058;
+  --muted: #b5bac1;
+  --text: #f2f3f5;
+  --accent: #5865f2;
+  --accent-weak: rgba(88, 101, 242, 0.2);
+  --hover: #35373c;
+  --track: #3f4147;
+  --ok: #23a55a;
+  --ok-weak: rgba(35, 165, 90, 0.16);
+  --warn: #f0b232;
+  --danger: #f23f43;
+  --nitro: linear-gradient(135deg, #5865f2 0%, #9b59f6 52%, #eb459e 100%);
+}
+
+body[data-design='bento'][data-theme='light'] {
+  --surface: #f2f3f5;
+  --raised: #ffffff;
+  --input: #e3e5e8;
+  --line: #e1e2e4;
+  --line-strong: #c4c9ce;
+  --muted: #5c5e66;
+  --text: #313338;
+  --accent: #5865f2;
+  --accent-weak: rgba(88, 101, 242, 0.12);
+  --hover: #e8e9eb;
+  --track: #dfe1e5;
+  --ok: #1f8b4c;
+  --warn: #a86d00;
+  --danger: #da373c;
+}
+
+/* Bento grid: every block is a tile; menu items pair up two per row */
+body[data-design='bento'] .menu {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-radius: 16px;
+}
+
+body[data-design='bento'] .menu > * {
+  grid-column: 1 / -1;
+}
+
+body[data-design='bento'] .sep {
+  display: none;
+}
+
+body[data-design='bento'] .head {
+  padding: 2px 4px 2px 6px;
+}
+
+/* Nitro hero tile */
+body[data-design='bento'] .usage {
+  padding: 0;
+}
+
+body[data-design='bento'] .hero {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--nitro);
+  color: #ffffff;
+}
+
+body[data-design='bento'] .hero-name,
+body[data-design='bento'] .hero-label,
+body[data-design='bento'] .hero-reset,
+body[data-design='bento'] .hero .chart-head {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+body[data-design='bento'] .hero .plan-pill {
+  border-color: rgba(255, 255, 255, 0.55);
+  color: #ffffff;
+}
+
+body[data-design='bento'] .hero .bar {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+body[data-design='bento'] .hero .bar i {
+  background: #ffffff;
+}
+
+body[data-design='bento'] .hero .alert {
+  background: rgba(0, 0, 0, 0.22);
+  color: #ffffff;
+}
+
+body[data-design='bento'] .hero .spark-area {
+  fill: rgba(255, 255, 255, 0.2);
+}
+
+body[data-design='bento'] .hero .spark-line {
+  stroke: #ffffff;
+}
+
+body[data-design='bento'] .limits {
+  gap: 6px;
+  margin-top: 6px;
+}
+
+body[data-design='bento'] .limits > div,
+body[data-design='bento'] .credits,
+body[data-design='bento'] .usage > .empty {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--raised);
+}
+
+body[data-design='bento'] .credits {
+  margin-top: 6px;
+}
+
+body[data-design='bento'] .row,
+body[data-design='bento'] .chips {
+  background: var(--raised);
+}
+
+body[data-design='bento'] .row {
+  border-radius: 12px;
+}
+
+body[data-design='bento'] .row:has(+ .chips) {
+  border-radius: 12px 12px 0 0;
+}
+
+body[data-design='bento'] .chips {
+  margin-top: -6px;
+  padding-top: 2px;
+  padding-bottom: 10px;
+  border-radius: 0 0 12px 12px;
+}
+
+body[data-design='bento'] .item {
+  position: relative;
+  grid-column: auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  height: 60px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  background: var(--raised);
+  font-size: 12px;
+  text-align: center;
+}
+
+body[data-design='bento'] .item > span:first-of-type {
+  flex: none;
+  width: 100%;
+}
+
+body[data-design='bento'] .item svg.external,
+body[data-design='bento'] .item .badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+body[data-design='bento'] .item.danger {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  height: 36px;
+}
+
+body[data-design='bento'] .item.danger > span:first-of-type {
+  width: auto;
+}
+
+body[data-design='bento'] .item:hover {
+  background: var(--hover);
+}
+
+body[data-design='bento'] .foot {
+  margin-top: 0;
+  border-radius: 12px;
+}
+
+/* ---------- Claude Code TUI ---------- */
+body[data-design='tui'] {
+  --font-sans: ui-monospace, 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+  --surface: #0c0c0c;
+  --raised: #161616;
+  --input: #0c0c0c;
+  --line: #2a2a2a;
+  --line-strong: #3d3d3d;
+  --muted: #8a8a8a;
+  --text: #e8e8e8;
+  --accent: #ef8257;
+  --accent-weak: rgba(239, 130, 87, 0.14);
+  --hover: #1c1c1c;
+  --track: #262626;
+  --knob: #0c0c0c;
+  --ok: #5fd787;
+  --ok-weak: rgba(95, 215, 135, 0.14);
+  --warn: #e5c07b;
+  --warn-weak: rgba(229, 192, 123, 0.12);
+  --danger: #ff6b6b;
+  --danger-weak: rgba(255, 107, 107, 0.12);
+  font-size: 12px;
+}
+
+body[data-design='tui'][data-theme='light'] {
+  --surface: #f4f1ea;
+  --raised: #ebe7dd;
+  --input: #ffffff;
+  --line: #d9d4c7;
+  --line-strong: #b8b2a3;
+  --muted: #6f6a5f;
+  --text: #1a1814;
+  --accent: #b84d24;
+  --accent-weak: rgba(184, 77, 36, 0.12);
+  --hover: #ebe7dd;
+  --track: #ddd8cb;
+  --knob: #ffffff;
+  --ok: #2b8a4e;
+  --warn: #8a6100;
+  --danger: #c0392b;
+}
+
+body[data-design='tui'] .menu {
+  border-color: var(--line-strong);
+  border-radius: 6px;
+}
+
+body[data-design='tui'] .app-icon,
+body[data-design='tui'] .client-pill,
+body[data-design='tui'] .plan-pill,
+body[data-design='tui'] .alert,
+body[data-design='tui'] .chip,
+body[data-design='tui'] .modes,
+body[data-design='tui'] .mode,
+body[data-design='tui'] .item,
+body[data-design='tui'] .foot {
+  border-radius: 4px;
+}
+
+body[data-design='tui'] .head-copy strong::before {
+  content: '> ';
+  color: var(--accent);
+}
+
+body[data-design='tui'] .hero-value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Segmented terminal gauges */
+body[data-design='tui'] .bar,
+body[data-design='tui'] .bar.big {
+  height: 10px;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--track) 0 6px, transparent 6px 8px);
+}
+
+body[data-design='tui'] .bar i {
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 8px);
+}
+
+body[data-design='tui'] .bar i.warn {
+  background: repeating-linear-gradient(90deg, var(--warn) 0 6px, transparent 6px 8px);
+}
+
+body[data-design='tui'] .bar i.danger {
+  background: repeating-linear-gradient(90deg, var(--danger) 0 6px, transparent 6px 8px);
+}
+
+body[data-design='tui'] .switch,
+body[data-design='tui'] .switch::after {
+  border-radius: 2px;
+}
+
+body[data-design='tui'] .item:hover {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+body[data-design='tui'] .item:hover svg {
+  color: var(--accent);
+}
+
+body[data-design='tui'] .sep {
+  height: 0;
+  border-top: 1px dashed var(--line-strong);
+  background: none;
+}
+
+/* ---------- Split Studio: compact tray ---------- */
+body[data-design='split'] .menu {
+  padding: 6px;
+  border-radius: 12px;
+}
+
+body[data-design='split'] .head {
+  padding: 2px 4px 6px 4px;
+}
+
+body[data-design='split'] .app-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+body[data-design='split'] .app-icon img {
+  width: 18px;
+  height: 18px;
+}
+
+body[data-design='split'] .usage {
+  padding: 0 6px 6px;
+}
+
+body[data-design='split'] .hero-value {
+  font-size: 22px;
+}
+
+body[data-design='split'] .chart {
+  margin-top: 6px;
+}
+
+body[data-design='split'] .spark {
+  height: 22px;
+}
+
+body[data-design='split'] .limits {
+  margin-top: 10px;
+}
+
+body[data-design='split'] .row {
+  min-height: 32px;
+  padding: 3px 6px 3px 8px;
+}
+
+body[data-design='split'] .chips {
+  padding: 0 8px 4px 33px;
+}
+
+body[data-design='split'] .chip {
+  height: 22px;
+}
+
+body[data-design='split'] .item {
+  height: 28px;
+  font-size: 12.5px;
+}
+
+body[data-design='split'] .foot {
+  margin-top: 4px;
+  padding: 6px 8px;
+}
+
+/* ---------- Fluent Mica: Windows 11 flyout ---------- */
+body[data-design='mica'] {
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --surface: #202020;
+  --raised: #2b2b2b;
+  --input: #2d2d2d;
+  --line: #3a3a3a;
+  --line-strong: #4a4a4a;
+  --muted: #a0a0a0;
+  --text: #ffffff;
+  --accent: #60cdff;
+  --accent-weak: rgba(96, 205, 255, 0.14);
+  --hover: #2d2d2d;
+  --track: #454545;
+  --knob: #000000;
+  --ok: #6ccb5f;
+  --ok-weak: rgba(108, 203, 95, 0.14);
+  --warn: #fce100;
+  --warn-weak: rgba(252, 225, 0, 0.12);
+  --danger: #ff99a4;
+  --danger-weak: rgba(255, 153, 164, 0.12);
+  --flyout-foot: #1c1c1c;
+  font-size: 13.5px;
+}
+
+body[data-design='mica'][data-theme='light'] {
+  --surface: #f3f3f3;
+  --raised: #fbfbfb;
+  --input: #ffffff;
+  --line: #e5e5e5;
+  --line-strong: #c4c4c4;
+  --muted: #616161;
+  --text: #1b1b1b;
+  --accent: #005fb8;
+  --accent-weak: rgba(0, 95, 184, 0.1);
+  --hover: #eaeaea;
+  --track: #d1d1d1;
+  --knob: #ffffff;
+  --ok: #0f7b0f;
+  --warn: #9d5d00;
+  --danger: #c42b1c;
+  --flyout-foot: #eeeeee;
+}
+
+body[data-design='mica'] .menu {
+  padding: 8px 8px 0;
+  border-color: var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.26);
+}
+
+body[data-design='mica'] .usage {
+  margin: 0 2px 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+}
+
+body[data-design='mica'] .app-icon,
+body[data-design='mica'] .item,
+body[data-design='mica'] .modes,
+body[data-design='mica'] .mode,
+body[data-design='mica'] .chip,
+body[data-design='mica'] .alert {
+  border-radius: 4px;
+}
+
+body[data-design='mica'] .item {
+  height: 36px;
+}
+
+body[data-design='mica'] .chip:hover {
+  border-color: var(--line-strong);
+}
+
+body[data-design='mica'] .mode.checked {
+  background: var(--accent);
+  color: var(--knob);
+}
+
+/* Fluent toggle: outlined when off, filled with the accent when on */
+body[data-design='mica'] .switch {
+  width: 36px;
+  height: 18px;
+  border: 1px solid var(--muted);
+  background: transparent;
+}
+
+body[data-design='mica'] .switch::after {
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  background: var(--muted);
+}
+
+body[data-design='mica'] .switch.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+body[data-design='mica'] .switch.on::after {
+  background: var(--knob);
+  transform: translateX(18px);
+}
+
+/* Windows 11 flyout footer band */
+body[data-design='mica'] .foot {
+  margin: 8px -8px 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--flyout-foot);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion: the menu content cascades in each time it opens. All off   */
+/* under prefers-reduced-motion (end of file).                        */
+/* ------------------------------------------------------------------ */
+
+body.switching,
+body.switching * {
+  transition:
+    background-color 0.35s var(--ease),
+    border-color 0.35s var(--ease),
+    color 0.35s var(--ease),
+    border-radius 0.35s var(--ease) !important;
+}
+
+.menu.pop {
+  animation: pop 0.2s var(--ease);
+}
+
+.menu.pop > * {
+  animation: rise 0.3s var(--ease) both;
+}
+
+.menu.pop > :nth-child(2) { animation-delay: 0.02s; }
+.menu.pop > :nth-child(3) { animation-delay: 0.04s; }
+.menu.pop > :nth-child(4) { animation-delay: 0.06s; }
+.menu.pop > :nth-child(5) { animation-delay: 0.08s; }
+.menu.pop > :nth-child(6) { animation-delay: 0.1s; }
+.menu.pop > :nth-child(7) { animation-delay: 0.12s; }
+.menu.pop > :nth-child(8) { animation-delay: 0.14s; }
+.menu.pop > :nth-child(9) { animation-delay: 0.16s; }
+.menu.pop > :nth-child(10) { animation-delay: 0.18s; }
+.menu.pop > :nth-child(11) { animation-delay: 0.2s; }
+.menu.pop > :nth-child(12) { animation-delay: 0.22s; }
+.menu.pop > :nth-child(n + 13) { animation-delay: 0.24s; }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Gauges fill from the left on open (clip keeps TUI segments intact) */
+.menu.pop .bar i {
+  animation: bar-grow 0.75s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes bar-grow {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.menu.pop .spark-line {
+  stroke-dasharray: 1200;
+  animation: draw 1s 0.12s var(--ease) both;
+}
+
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1200;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.menu.pop .hero-value {
+  animation: count-in 0.45s 0.05s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes count-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+
+.client-pill.on i {
+  animation: live 2.4s ease-in-out infinite;
+}
+
+@keyframes live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+}
+
+.item,
+.chip,
+.mode {
+  transition:
+    background-color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    color 0.12s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.item svg {
+  transition: transform 0.18s var(--ease), color 0.12s var(--ease);
+}
+
+.item:hover svg:first-child {
+  transform: translateX(2px);
+}
+
+.item:active,
+.chip:active,
+.mode:active {
+  transform: scale(0.96);
+}
+
+.switch::after {
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.18s var(--ease);
+}
+
+/* ---------- Discord Bento ---------- */
+body[data-design='bento'] .hero {
+  background-size: 220% 220%;
+  animation: nitro 9s ease-in-out infinite alternate;
+}
+
+@keyframes nitro {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+body[data-design='bento'] .item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.2);
+}
+
+body[data-design='bento'] .item:active {
+  transform: scale(0.97);
+}
+
+/* ---------- Claude Code TUI ---------- */
+body[data-design='tui'] .head-copy strong::after {
+  content: '\258C';
+  margin-left: 3px;
+  color: var(--accent);
+  animation: blink 1.05s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+body[data-design='tui'] .menu.pop > * {
+  animation: type-in 0.24s steps(5) both;
+}
+
+@keyframes type-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+body[data-design='tui'] .menu.pop .bar i {
+  animation: bar-grow 0.8s 0.1s steps(12) both;
+}
+
+/* ---------- Fluent Mica: Windows 11 flyout entrance ---------- */
+body[data-design='mica'] .menu.pop {
+  animation: flyout 0.28s cubic-bezier(0.1, 0.9, 0.2, 1);
+}
+
+@keyframes flyout {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+body[data-design='mica'] .menu.pop > * {
+  animation: none;
+}
+
+/* ---------- Orbit: near-black panel, soft blue glow, outlined cards ---------- */
+body[data-design='orbit'] {
+  --font-sans: 'Google Sans Text', 'Google Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --surface: #0b0b0d;
+  --raised: #1c1c1f;
+  --input: #1c1c1f;
+  --line: #2a2a2e;
+  --line-strong: #3c3c41;
+  --muted: #9aa0a6;
+  --text: #e8eaed;
+  --accent: #8ab4f8;
+  --accent-weak: rgba(138, 180, 248, 0.14);
+  --hover: #1d1d20;
+  --track: #2a2a2d;
+  --knob: #062e6f;
+  --ok: #81c995;
+  --ok-weak: rgba(129, 201, 149, 0.14);
+  --warn: #fdd663;
+  --warn-weak: rgba(253, 214, 99, 0.12);
+  --danger: #f28b82;
+  --danger-weak: rgba(242, 139, 130, 0.12);
+  --glow: rgba(66, 133, 244, 0.2);
+  font-size: 13.5px;
+}
+
+body[data-design='orbit'][data-theme='light'] {
+  --surface: #ffffff;
+  --raised: #f1f3f4;
+  --input: #f1f3f4;
+  --line: #dadce0;
+  --line-strong: #bdc1c6;
+  --muted: #5f6368;
+  --text: #1f1f1f;
+  --accent: #0b57d0;
+  --accent-weak: rgba(11, 87, 208, 0.1);
+  --hover: #f1f3f4;
+  --track: #e3e3e3;
+  --knob: #ffffff;
+  --ok: #137333;
+  --warn: #8a5a00;
+  --danger: #b3261e;
+  --glow: rgba(11, 87, 208, 0.08);
+}
+
+body[data-design='orbit'] .menu {
+  border-color: var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(90% 38% at 50% -6%, var(--glow), transparent 72%),
+    var(--surface);
+}
+
+body[data-design='orbit'] .usage {
+  margin: 0 2px 6px;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+body[data-design='orbit'] .hero-value {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+body[data-design='orbit'] .bar.big {
+  height: 4px;
+}
+
+body[data-design='orbit'] .sep {
+  background: transparent;
+}
+
+body[data-design='orbit'] .item,
+body[data-design='orbit'] .app-icon {
+  border-radius: 8px;
+}
+
+body[data-design='orbit'] .item svg,
+body[data-design='orbit'] .row-icon {
+  color: var(--muted);
+}
+
+body[data-design='orbit'] .chip {
+  border-color: transparent;
+  background: var(--raised);
+}
+
+body[data-design='orbit'] .chip:hover {
+  border-color: var(--line-strong);
+}
+
+body[data-design='orbit'] .modes {
+  border-radius: 999px;
+  background: transparent;
+}
+
+body[data-design='orbit'] .mode {
+  border-radius: 999px;
+}
+
+body[data-design='orbit'] .mode.checked {
+  background: var(--raised);
+  color: var(--text);
+}
+
+body[data-design='orbit'] .switch {
+  border: 1px solid var(--line-strong);
+  background: var(--input);
+}
+
+body[data-design='orbit'] .switch::after {
+  top: 1px;
+  left: 1px;
+  background: var(--muted);
+}
+
+body[data-design='orbit'] .switch.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+body[data-design='orbit'] .switch.on::after {
+  background: var(--knob);
+}
+
+body[data-design='orbit'] .foot {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+}
+
+/* ---------- OLED: true black for OLED screens, any style ---------- */
+body[data-oled][data-theme='dark'] {
+  --surface: #000000;
+  --raised: #0d0d0d;
+  --input: #000000;
+  --line: #1c1c1c;
+  --line-strong: #2e2e2e;
+  --hover: #121212;
+  --track: #1f1f1f;
+  --flyout-foot: #000000;
+}
+
+body[data-oled][data-theme='dark'] .menu {
+  border-color: #1c1c1c;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

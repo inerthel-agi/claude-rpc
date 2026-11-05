@@ -44,6 +44,12 @@ pub(crate) struct ClaudeConfig {
     // Small Discord image shows the model family instead of the terminal icon.
     #[serde(default)]
     pub(crate) model_icon: bool,
+    // Session title and git branch on the details line. Off by default: a
+    // title can describe private work.
+    #[serde(default)]
+    pub(crate) show_session_name: bool,
+    #[serde(default)]
+    pub(crate) show_branch: bool,
     // Custom Discord lines; empty = built-in text. See presence::render_template.
     #[serde(default)]
     pub(crate) details_template: String,
@@ -90,6 +96,8 @@ impl Default for ClaudeConfig {
             pause_until_ms: 0,
             show_sessions: false,
             model_icon: false,
+            show_session_name: false,
+            show_branch: false,
             details_template: String::new(),
             state_template: String::new(),
             private_projects: Vec::new(),

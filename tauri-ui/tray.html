@@ -16,11 +16,12 @@
           <span class="client-pill" id="client-pill"><i></i><span id="client-label"></span></span>
         </div>
         <span id="model-line"></span>
+        <span id="session-line" data-section="session" hidden></span>
       </div>
     </header>
 
     <section class="usage" id="usage">
-      <div class="hero" id="hero">
+      <div class="hero" id="hero" data-section="usage">
         <div class="hero-name"><span id="hero-name"></span><span class="plan-pill" id="plan-pill" hidden></span></div>
         <div class="hero-top">
           <span class="hero-value" id="hero-value">0%</span>
@@ -32,14 +33,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
           <span id="alert-text"></span>
         </div>
-        <div class="chart" id="chart" hidden>
+        <div class="chart" id="chart" data-section="chart" hidden>
           <div class="chart-head"><span data-i18n="tray.last24h">Last 24 h</span><span id="chart-peak"></span></div>
           <div id="chart-slot"></div>
         </div>
       </div>
-      <p class="empty" id="usage-empty" data-i18n="tray.noLimits" hidden>Usage appears once Claude reports it.</p>
-      <div class="limits" id="limits"></div>
-      <div class="credits" id="credits" hidden>
+      <p class="empty" id="usage-empty" data-section="usage" data-i18n="tray.noLimits" hidden>Usage appears once Claude reports it.</p>
+      <div class="limits" id="limits" data-section="limits"></div>
+      <div class="credits" id="credits" data-section="credits" hidden>
         <div class="limit-head"><span data-i18n="tray.credits">Usage credits</span><b id="credits-value"></b></div>
         <div class="bar" id="credits-bar"><i id="credits-fill"></i></div>
       </div>
@@ -47,7 +48,7 @@
 
     <div class="sep"></div>
 
-    <div class="row">
+    <div class="row" data-section="pause">
       <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
       <div class="row-copy">
         <span data-i18n="tray.pause">Pause Discord presence</span>
@@ -55,13 +56,13 @@
       </div>
       <button class="switch" id="pause-switch" role="switch" aria-checked="false" data-i18n-aria="tray.pause"></button>
     </div>
-    <div class="chips">
+    <div class="chips" data-section="pause">
       <button class="chip" data-pause="30" data-i18n="tray.30min">30 min</button>
       <button class="chip" data-pause="60" data-i18n="tray.1h">1 h</button>
       <button class="chip" data-pause="tomorrow" data-i18n="tray.tomorrow">Tomorrow</button>
     </div>
 
-    <div class="row">
+    <div class="row" data-section="activity">
       <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       <div class="row-copy">
         <span data-i18n="tray.activity">Activity</span>
@@ -85,12 +86,12 @@
 
     <div class="sep"></div>
 
-    <button class="item" data-action="open_desktop" id="open-desktop">
+    <button class="item" data-action="open_desktop" id="open-desktop" data-section="desktop">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       <span id="desktop-label" data-i18n="tray.openDesktop">Open Claude Desktop</span>
       <svg class="external" id="desktop-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
     </button>
-    <button class="item" data-action="open_code" id="open-code">
+    <button class="item" data-action="open_code" id="open-code" data-section="code">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
       <span id="code-label" data-i18n="tray.launchCode">Launch Claude Code</span>
       <svg class="external" id="code-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
@@ -99,7 +100,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span data-i18n="tray.settings">Settings…</span>
     </button>
-    <button class="item" data-action="update" id="update">
+    <button class="item" data-action="update" id="update" data-section="update">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       <span id="update-label" data-i18n="tray.updates">Check for updates</span>
       <span class="badge" id="update-badge" hidden></span>
@@ -109,7 +110,7 @@
       <span data-i18n="tray.quit">Quit</span>
     </button>
 
-    <footer class="foot" id="foot">
+    <footer class="foot" id="foot" data-section="footer">
       <svg class="discord" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.32 4.37A19.8 19.8 0 0 0 15.38 2.8a13.9 13.9 0 0 0-.63 1.3 18.4 18.4 0 0 0-5.5 0 13 13 0 0 0-.64-1.3 19.7 19.7 0 0 0-4.94 1.54C.53 9.05-.32 13.6.1 18.08a19.9 19.9 0 0 0 6.07 3.07 14.7 14.7 0 0 0 1.3-2.12 12.9 12.9 0 0 1-2.04-.98l.5-.39a14.2 14.2 0 0 0 12.14 0l.5.39c-.65.39-1.33.72-2.05.98.37.75.81 1.46 1.3 2.12a19.8 19.8 0 0 0 6.08-3.07c.5-5.18-.84-9.7-3.55-13.71zM8.02 15.33c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.96-2.42 2.16-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.34-.96 2.42-2.16 2.42zm7.97 0c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.95-2.42 2.16-2.42 1.2 0 2.18 1.1 2.16 2.42 0 1.34-.95 2.42-2.16 2.42z"/></svg>
       <span id="foot-text"></span>
     </footer>

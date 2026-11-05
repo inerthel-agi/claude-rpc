@@ -90,6 +90,9 @@ struct ClaudeStatus {
     started_at_ms: Option<u64>,
     // Extra usage spend: { enabled, used, limit, currency } or null.
     credits: Value,
+    // Active coding session title and git branch (tray menu).
+    session_title: Option<String>,
+    git_branch: Option<String>,
 }
 
 #[tauri::command]
@@ -171,6 +174,14 @@ fn load_status() -> Result<ClaudeStatus, String> {
             .map(str::to_string),
         started_at_ms: value.get("startedAtMs").and_then(Value::as_u64),
         credits: value.get("credits").cloned().unwrap_or(Value::Null),
+        session_title: value
+            .get("sessionTitle")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        git_branch: value
+            .get("gitBranch")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -538,7 +549,7 @@ fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
 // tray.js then reports the menu's real height through `tray_fit`, which shrinks
 // the window upward from its bottom edge so no transparent area catches clicks.
 const TRAY_MENU_WIDTH: f64 = 316.0;
-const TRAY_MENU_HEIGHT: f64 = 720.0;
+const TRAY_MENU_HEIGHT: f64 = 800.0;
 
 #[tauri::command]
 fn tray_fit(app: tauri::AppHandle, height: f64) -> Result<(), String> {

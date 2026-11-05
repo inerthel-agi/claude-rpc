@@ -9,6 +9,8 @@
       'client.off': 'Off',
       'client.notRunning': 'Not running',
       'theme.dark': 'Dark',
+      'theme.oled': 'OLED',
+      'theme.oledHint': 'True black, for OLED screens',
       'theme.system': 'System',
       'theme.light': 'Light',
       'nav.presence': 'Presence',
@@ -37,12 +39,14 @@
       'mode.competing': 'Competing',
       'details.title': 'Details',
       'details.show': 'Show on profile',
-      'details.showHint': 'Added after the model. Plan needs Provider.',
+      'details.showHint': 'Added after the model; session name and branch after the app. Plan needs Provider.',
       'labels.provider': 'Provider',
       'labels.plan': 'Plan',
       'labels.effort': 'Effort',
       'labels.sessions': 'Sessions',
       'labels.modelIcon': 'Model icon',
+      'labels.sessionName': 'Session name',
+      'labels.branch': 'Git branch',
       'limits.label': 'Usage limits',
       'limits.hint': 'What Discord shows. The tray menu always shows all.',
       'limits.5h': '5-hour',
@@ -109,6 +113,29 @@
       'general.title': 'General',
       'general.appearance': 'Appearance',
       'app.theme': 'Theme',
+      'app.design': 'UI style',
+      'app.designHint': 'Applies to this window and the tray menu.',
+      'design.classic': 'Classic',
+      'design.bento': 'Discord Bento',
+      'design.tui': 'Claude Code TUI',
+      'design.split': 'Split Studio',
+      'design.mica': 'Fluent Mica',
+      'design.orbit': 'Orbit',
+      'pin.label': 'Live summary',
+      'trayMenu.title': 'Tray menu',
+      'trayMenu.show': 'Show in the tray menu',
+      'trayMenu.hint': 'Settings and Quit always stay.',
+      'trayMenu.session': 'Session name',
+      'trayMenu.usage': '5-hour session',
+      'trayMenu.chart': '24-hour chart',
+      'trayMenu.limits': 'Weekly limits',
+      'trayMenu.credits': 'Usage credits',
+      'trayMenu.pause': 'Pause',
+      'trayMenu.activity': 'Activity type',
+      'trayMenu.desktop': 'Open Claude Desktop',
+      'trayMenu.code': 'Launch Claude Code',
+      'trayMenu.update': 'Updates',
+      'trayMenu.footer': 'Discord status',
       'app.language': 'Language',
       'app.languageAuto': 'Automatic',
       'general.startup': 'Start with Windows',
@@ -180,6 +207,8 @@
       'client.off': 'Inactif',
       'client.notRunning': 'Pas lancé',
       'theme.dark': 'Sombre',
+      'theme.oled': 'OLED',
+      'theme.oledHint': 'Noir pur, pour les écrans OLED',
       'theme.system': 'Système',
       'theme.light': 'Clair',
       'nav.presence': 'Présence',
@@ -208,12 +237,14 @@
       'mode.competing': 'Compétition',
       'details.title': 'Détails',
       'details.show': 'Afficher sur le profil',
-      'details.showHint': 'Ajouté après le modèle. Forfait demande Fournisseur.',
+      'details.showHint': 'Ajouté après le modèle ; nom de session et branche après l’app. Forfait demande Fournisseur.',
       'labels.provider': 'Fournisseur',
       'labels.plan': 'Forfait',
       'labels.effort': 'Effort',
       'labels.sessions': 'Sessions',
       'labels.modelIcon': 'Icône du modèle',
+      'labels.sessionName': 'Nom de session',
+      'labels.branch': 'Branche git',
       'limits.label': 'Limites d’usage',
       'limits.hint': 'Ce que Discord affiche. Le menu les montre toujours toutes.',
       'limits.5h': '5 heures',
@@ -280,6 +311,29 @@
       'general.title': 'Général',
       'general.appearance': 'Apparence',
       'app.theme': 'Thème',
+      'app.design': 'Style d’interface',
+      'app.designHint': 'S’applique à cette fenêtre et au menu de la barre des tâches.',
+      'design.classic': 'Classique',
+      'design.bento': 'Discord Bento',
+      'design.tui': 'Claude Code TUI',
+      'design.split': 'Split Studio',
+      'design.mica': 'Fluent Mica',
+      'design.orbit': 'Orbit',
+      'pin.label': 'Résumé en direct',
+      'trayMenu.title': 'Menu de la barre des tâches',
+      'trayMenu.show': 'Afficher dans le menu',
+      'trayMenu.hint': 'Réglages et Quitter restent toujours affichés.',
+      'trayMenu.session': 'Nom de session',
+      'trayMenu.usage': 'Session de 5 h',
+      'trayMenu.chart': 'Graphique 24 h',
+      'trayMenu.limits': 'Limites hebdomadaires',
+      'trayMenu.credits': 'Crédits d’usage',
+      'trayMenu.pause': 'Pause',
+      'trayMenu.activity': 'Type d’activité',
+      'trayMenu.desktop': 'Ouvrir Claude Desktop',
+      'trayMenu.code': 'Lancer Claude Code',
+      'trayMenu.update': 'Mises à jour',
+      'trayMenu.footer': 'État Discord',
       'app.language': 'Langue',
       'app.languageAuto': 'Automatique',
       'general.startup': 'Lancer avec Windows',
@@ -583,7 +637,109 @@
     if (!editable) event.preventDefault();
   });
 
+  // UI style, shared by the settings window and the tray menu through
+  // localStorage (same origin), like the theme. "classic" is the default look.
+  const DESIGN_KEY = 'claude-rpc-design';
+  const DESIGNS = ['classic', 'bento', 'tui', 'split', 'mica', 'orbit'];
+
+  function readDesign() {
+    try {
+      const saved = localStorage.getItem(DESIGN_KEY);
+      return DESIGNS.includes(saved) ? saved : 'classic';
+    } catch {
+      return 'classic';
+    }
+  }
+
+  // Colours crossfade when the style or theme changes, but not while the
+  // window first paints.
+  let ready = false;
+  setTimeout(() => {
+    ready = true;
+  }, 400);
+  let crossfadeTimer = null;
+  function crossfade() {
+    if (!ready) return;
+    document.body.classList.add('switching');
+    clearTimeout(crossfadeTimer);
+    crossfadeTimer = setTimeout(() => document.body.classList.remove('switching'), 450);
+  }
+
+  // Theme setting: dark, oled (dark with true black), system or light.
+  const THEMES = ['dark', 'oled', 'system', 'light'];
+  function setTheme(saved) {
+    const safe = THEMES.includes(saved) ? saved : 'dark';
+    const theme =
+      safe === 'light' ||
+      (safe === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches)
+        ? 'light'
+        : 'dark';
+    const body = document.body;
+    const oled = safe === 'oled';
+    if (body.dataset.theme !== theme || 'oled' in body.dataset !== oled) crossfade();
+    body.dataset.theme = theme;
+    if (oled) body.dataset.oled = '';
+    else delete body.dataset.oled;
+    return safe;
+  }
+
+  function setDesign(design) {
+    const safe = DESIGNS.includes(design) ? design : 'classic';
+    if ((document.body.dataset.design || 'classic') !== safe) crossfade();
+    if (safe === 'classic') delete document.body.dataset.design;
+    else document.body.dataset.design = safe;
+    try {
+      localStorage.setItem(DESIGN_KEY, safe);
+    } catch {
+      /* storage unavailable: the style applies until the window closes */
+    }
+    return safe;
+  }
+
+  // Tray menu sections the user chose to hide (Settings > General > Tray
+  // menu). Settings and Quit always stay so the menu can never lock you out.
+  const TRAY_HIDDEN_KEY = 'claude-rpc-tray-hidden';
+  const TRAY_SECTIONS = [
+    'session',
+    'usage',
+    'chart',
+    'limits',
+    'credits',
+    'pause',
+    'activity',
+    'desktop',
+    'code',
+    'update',
+    'footer',
+  ];
+
+  function readTrayHidden() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(TRAY_HIDDEN_KEY) || '[]');
+      return Array.isArray(saved) ? saved.filter((id) => TRAY_SECTIONS.includes(id)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeTrayHidden(ids) {
+    try {
+      localStorage.setItem(TRAY_HIDDEN_KEY, JSON.stringify(ids));
+    } catch {
+      /* storage unavailable: the choice lasts until the window closes */
+    }
+  }
+
   window.RpcShared = {
+    TRAY_HIDDEN_KEY,
+    TRAY_SECTIONS,
+    readTrayHidden,
+    writeTrayHidden,
+    DESIGN_KEY,
+    DESIGNS,
+    readDesign,
+    setDesign,
+    setTheme,
     t,
     tBold,
     setLanguage,

@@ -97,6 +97,13 @@ struct DetectionResult {
     // Working directory of the active Claude Code session (private projects,
     // the {project} template variable).
     project_dir: Option<String>,
+    // Every recently active session folder: a private one hides the activity
+    // even when another session's log is the latest.
+    recent_project_dirs: Vec<String>,
+    // Title and git branch of the active coding session (None in Chat mode or
+    // when the session log is stale).
+    session_title: Option<String>,
+    git_branch: Option<String>,
     // [unix ms, percent] samples of the 5-hour bucket, for the tray chart.
     history_5h: Vec<[u64; 2]>,
     code_instances: usize,
@@ -119,6 +126,9 @@ impl Default for DetectionResult {
             provider: "Unknown".into(),
             plan: None,
             project_dir: None,
+            recent_project_dirs: Vec::new(),
+            session_title: None,
+            git_branch: None,
             history_5h: Vec::new(),
             code_instances: 0,
             cli_alongside: false,
@@ -148,6 +158,10 @@ struct SessionInfo {
     started_at_ms: Option<u64>,
     model: Option<String>,
     cwd: Option<String>,
+    title: Option<String>,
+    branch: Option<String>,
+    // Working directories of every session written in the last 10 minutes.
+    recent_cwds: Vec<String>,
 }
 
 // The process scan runs every 250 ms, but walking the Desktop UI tree and
@@ -178,6 +192,9 @@ pub(crate) struct StateMachine {
     cached_code_model_session: Option<PathBuf>,
     cached_code_effort: Option<String>,
     cached_code_effort_session: Option<PathBuf>,
+    // The title is re-logged often but can scroll out of the read tail.
+    cached_session_title: Option<(PathBuf, String)>,
+    session_prompts: PromptCache,
 }
 
 pub fn run(
@@ -422,6 +439,12 @@ fn detect(
         plan,
         provider,
         project_dir: session.as_ref().and_then(|session| session.cwd.clone()),
+        recent_project_dirs: session
+            .as_ref()
+            .map(|session| session.recent_cwds.clone())
+            .unwrap_or_default(),
+        session_title: None,
+        git_branch: None,
         history_5h: machine.history_5h.clone(),
         // Sessions shown on the profile: Desktop Code tabs plus terminal CLIs.
         code_instances: if client == ClientType::Code {
@@ -444,6 +467,16 @@ fn detect(
     if client == ClientType::Code {
         let effort = resolve_code_effort(machine, session.as_ref());
         result.model = append_code_effort(result.model, effort);
+    }
+
+    let coding = client == ClientType::Code || result.mode.as_deref() == Some("Code");
+    if let Some(session) = session.as_ref().filter(|session| {
+        coding
+            && modified_ms(&session.file)
+                .is_some_and(|mtime| now_ms().saturating_sub(mtime) <= ACTIVE_SESSION_MS)
+    }) {
+        result.session_title = resolve_session_title(machine, session);
+        result.git_branch = session.branch.clone();
     }
 
     let now = now_ms();
@@ -502,6 +535,20 @@ fn activity_start(
         .or(oldest_process)
 }
 
+fn resolve_session_title(machine: &mut StateMachine, session: &SessionInfo) -> Option<String> {
+    match &session.title {
+        Some(title) => {
+            machine.cached_session_title = Some((session.file.clone(), title.clone()));
+            Some(title.clone())
+        }
+        None => machine
+            .cached_session_title
+            .as_ref()
+            .filter(|(file, _)| *file == session.file)
+            .map(|(_, title)| title.clone()),
+    }
+}
+
 // The session folder walk and log tails cost far more than a 250 ms tick:
 // reuse the result for a second.
 fn cached_session_info(machine: &mut StateMachine) -> Option<SessionInfo> {
@@ -511,7 +558,7 @@ fn cached_session_info(machine: &mut StateMachine) -> Option<SessionInfo> {
             return info.clone();
         }
     }
-    let info = read_session_info();
+    let info = read_session_info(&mut machine.session_prompts);
     machine.session_cache = Some((now_ms(), info.clone()));
     info
 }
@@ -551,7 +598,7 @@ pub(crate) fn diagnostic_report() -> String {
             process.name, process.process_id
         ));
     }
-    let session = read_session_info();
+    let session = read_session_info(&mut PromptCache::new());
     if desktop_ids.is_empty() {
         lines.push("Desktop: not running".into());
     } else {

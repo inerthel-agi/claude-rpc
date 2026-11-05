@@ -20,7 +20,7 @@ To build from source:
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_4.0.3_x64-setup.exe`: installer.
+- `Claude.RPC_4.0.4_x64-setup.exe`: installer.
 - `claude-rpc.exe`: portable executable.
 
 Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
@@ -68,16 +68,18 @@ Settings are stored in `%USERPROFILE%\.claude-rpc\config.json`. The settings win
 | `showEffort` | bool | `true` | Show the thinking effort. |
 | `showSessions` | bool | `false` | Show the number of open Claude Code sessions when there are two or more. |
 | `modelIcon` | bool | `false` | Use the model family icon as the small Discord image. |
+| `showSessionName` | bool | `false` | Add the Claude Code session title (set by `/rename` or by Claude Desktop) to the first Discord line. |
+| `showBranch` | bool | `false` | Add the session's git branch to the first Discord line. |
 | `showLimits` | bool | `true` | Show usage limits on Discord. |
 | `showLimit5h`, `showLimitAll`, `showLimitFable` | bool | `true` | Choose the 5-hour, weekly and Fable weekly limits shown on Discord. Claude Ultra has no 5-hour limit. |
 | `detailsTemplate`, `stateTemplate` | string | `""` | Custom Discord lines. Empty uses the default text. |
-| `privateProjects` | string list | `[]` | Folder names or paths whose sessions are never published. |
+| `privateProjects` | string list | `[]` | Folder names or paths whose sessions are never published. Nothing is published while any session in these folders was active in the last 10 minutes. |
 | `hideInChat` | bool | `false` | Publish nothing while the Claude Desktop Chat tab is open. |
 | `alert80`, `alert95`, `alertReset` | bool | `true` | Windows notifications for the 5-hour session, or the weekly limit on Claude Ultra. |
 | `language` | string | `auto` | Interface language: `auto`, `en` or `fr`. |
 | `buttons` | list | Claude, GitHub Repo | Up to two `{ "label", "url" }` buttons, sent in `watching` mode only. |
 
-Template variables: `{model}`, `{effort}`, `{plan}`, `{provider}`, `{limits}`, `{limit5h}`, `{limitWeekly}`, `{limitFable}`, `{sessions}`, `{project}`, `{client}`, `{mode}`.
+Template variables: `{model}`, `{effort}`, `{plan}`, `{provider}`, `{limits}`, `{limit5h}`, `{limitWeekly}`, `{limitFable}`, `{reset5h}`, `{resetWeekly}`, `{sessions}`, `{project}`, `{session}`, `{branch}`, `{client}`, `{mode}`. `{reset5h}` and `{resetWeekly}` give the time left before the limit resets, such as `1h 40m`. `{session}` and `{branch}` are empty in the Chat tab and when no session log was written in the last hour.
 
 Environment variables:
 
@@ -98,6 +100,7 @@ Environment variables:
 | Claude Code model | Latest session log in `~\.claude\projects`, `/model` output, then settings and environment fallbacks. |
 | Plan | `~\.claude\.credentials.json`, then `~\.claude.json`. |
 | Usage limits | Claude usage API with the Claude Code sign-in, and the Claude Desktop usage button and popover. |
+| Session title and git branch | `custom-title` and `gitBranch` fields of the same session log. |
 | Usage credits | `extra_usage` in the same Claude usage API response, in the account's billing currency. Never sent to Discord. |
 
 ## Limitations

@@ -49,7 +49,7 @@ pub(super) fn build_activity(result: &DetectionResult, config: &ClaudeConfig) ->
     Some(activity)
 }
 
-pub(super) fn build_details(result: &DetectionResult, mode: &str) -> String {
+pub(super) fn build_details(result: &DetectionResult, mode: &str, config: &ClaudeConfig) -> String {
     let base = match (result.client, mode) {
         (ClientType::Desktop, "watching") => "Watching Claude",
         (ClientType::Code, "watching") => "Watching Claude Code",
@@ -68,7 +68,17 @@ pub(super) fn build_details(result: &DetectionResult, mode: &str) -> String {
     if result.cli_alongside {
         details.push_str(" + CLI");
     }
-    details
+    if config.show_session_name {
+        if let Some(title) = &result.session_title {
+            details = format!("{details} · {title}");
+        }
+    }
+    if config.show_branch {
+        if let Some(branch) = &result.git_branch {
+            details = format!("{details} · {branch}");
+        }
+    }
+    truncate(details, 128)
 }
 
 pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> String {
@@ -95,7 +105,8 @@ pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> St
 
 // Discord lines as published: the user's template when set, else built-in.
 pub(super) fn final_details(result: &DetectionResult, mode: &str, config: &ClaudeConfig) -> String {
-    render_template(&config.details_template, result).unwrap_or_else(|| build_details(result, mode))
+    render_template(&config.details_template, result)
+        .unwrap_or_else(|| build_details(result, mode, config))
 }
 
 pub(super) fn final_state(result: &DetectionResult, config: &ClaudeConfig) -> String {
@@ -103,7 +114,8 @@ pub(super) fn final_state(result: &DetectionResult, config: &ClaudeConfig) -> St
 }
 
 // Replaces {model} {effort} {plan} {provider} {limits} {limit5h} {limitWeekly}
-// {limitFable} {sessions} {project} {client} {mode}. None when the template is
+// {limitFable} {reset5h} {resetWeekly} {sessions} {project} {session} {branch}
+// {client} {mode}. None when the template is
 // empty or renders to under 2 characters (Discord's minimum).
 pub(super) fn render_template(template: &str, result: &DetectionResult) -> Option<String> {
     let template = template.trim();
@@ -122,6 +134,15 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
             .iter()
             .find(|entry| entry.label == label)
             .map(|entry| format!("{}%", entry.used_percent))
+            .unwrap_or_default()
+    };
+    let reset = |label: &str| {
+        result
+            .limits
+            .iter()
+            .find(|entry| entry.label == label)
+            .and_then(|entry| entry.reset.as_deref())
+            .and_then(|reset| format_reset(reset, now_ms()))
             .unwrap_or_default()
     };
     let client = match result.client {
@@ -152,6 +173,13 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
         ("{limit5h}", limit("5h")),
         ("{limitWeekly}", limit("All")),
         ("{limitFable}", limit("Fable")),
+        ("{reset5h}", reset("5h")),
+        ("{resetWeekly}", reset("All")),
+        (
+            "{session}",
+            result.session_title.clone().unwrap_or_default(),
+        ),
+        ("{branch}", result.git_branch.clone().unwrap_or_default()),
         ("{sessions}", result.code_instances.max(1).to_string()),
         (
             "{project}",
@@ -168,8 +196,43 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
     (rendered.chars().count() >= 2).then_some(rendered)
 }
 
+// Time left before a limit resets, "1h 40m". OAuth gives an ISO date, Claude
+// Desktop text such as "in 4 hr 33 min" or "Sun 4:00 AM" (kept as is).
+pub(super) fn format_reset(reset: &str, now: u64) -> Option<String> {
+    let reset = reset.trim();
+    let minutes = if let Some(at) = parse_iso_ms(reset).filter(|_| reset.contains('T')) {
+        at.saturating_sub(now).div_ceil(60_000)
+    } else if let Some(rest) = reset.strip_prefix("in ") {
+        let mut minutes = 0;
+        let mut number = None;
+        for word in rest.split_whitespace() {
+            match word.parse::<u64>() {
+                Ok(value) => number = Some(value),
+                Err(_) => match (number.take(), word.chars().next()) {
+                    (Some(value), Some('h')) => minutes += value * 60,
+                    (Some(value), Some('m')) => minutes += value,
+                    (Some(value), Some('d')) => minutes += value * 24 * 60,
+                    _ => return Some(reset.to_string()),
+                },
+            }
+        }
+        minutes
+    } else {
+        return (!reset.is_empty()).then(|| reset.to_string());
+    };
+    Some(
+        match (minutes / (24 * 60), minutes / 60 % 24, minutes % 60) {
+            (0, 0, m) => format!("{m}m"),
+            (0, h, 0) => format!("{h}h"),
+            (0, h, m) => format!("{h}h {m}m"),
+            (d, h, _) => format!("{d}d {h}h"),
+        },
+    )
+}
+
 pub(super) fn project_name(dir: Option<&str>) -> Option<String> {
-    dir?.replace('\\', "/")
+    project_root(dir?)
+        .replace('\\', "/")
         .trim_end_matches('/')
         .rsplit('/')
         .next()
@@ -188,14 +251,22 @@ pub(super) fn hidden_reason(
     {
         return Some("chat");
     }
-    let coding = result.client == ClientType::Code || result.mode.as_deref() == Some("Code");
+    let coding = result.client == ClientType::Code
+        || result.mode.as_deref() == Some("Code")
+        || result.cli_alongside;
     if coding
         && !config.private_projects.is_empty()
-        && result
+        && (result
             .project_dir
             .as_deref()
             // Do not publish until an enabled privacy filter can be evaluated.
             .is_none_or(|dir| is_private_project(dir, &config.private_projects))
+            // Several sessions run at once: the latest log may not be the one
+            // in use, so any recently active private session hides everything.
+            || result
+                .recent_project_dirs
+                .iter()
+                .any(|dir| is_private_project(dir, &config.private_projects)))
     {
         return Some("private");
     }
@@ -203,23 +274,27 @@ pub(super) fn hidden_reason(
 }
 
 // An entry without a slash matches the project folder name; one with a slash
-// matches that path and everything below it. Case-insensitive.
+// matches that path and everything below it. Case-insensitive, accented
+// letters included, as Windows paths are. A worktree session also matches
+// its project.
 pub(super) fn is_private_project(dir: &str, entries: &[String]) -> bool {
-    let dir = dir
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_ascii_lowercase();
-    let name = dir.rsplit('/').next().unwrap_or("");
-    entries.iter().any(|entry| {
-        let entry = entry
+    let normalize = |value: &str| {
+        value
             .replace('\\', "/")
             .trim_end_matches('/')
-            .to_ascii_lowercase();
-        if entry.contains('/') {
-            dir == entry || dir.starts_with(&format!("{entry}/"))
-        } else {
-            !entry.is_empty() && name == entry
-        }
+            .to_lowercase()
+    };
+    let dirs = [normalize(dir), normalize(project_root(dir))];
+    entries.iter().any(|entry| {
+        let entry = normalize(entry);
+        !entry.is_empty()
+            && dirs.iter().any(|dir| {
+                if entry.contains('/') {
+                    *dir == entry || dir.starts_with(&format!("{entry}/"))
+                } else {
+                    dir.rsplit('/').next() == Some(entry.as_str())
+                }
+            })
     })
 }
 
@@ -317,6 +392,11 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         // A new session restarts the Discord timer.
         "startedAt": result.started_at_ms,
         "modelIcon": config.model_icon,
+        "showSessionName": config.show_session_name,
+        "showBranch": config.show_branch,
+        "sessionTitle": result.session_title,
+        "branch": result.git_branch,
+        "recentProjects": result.recent_project_dirs,
         "detailsTemplate": config.details_template,
         "stateTemplate": config.state_template,
         "hidden": hidden_reason(result, config),
@@ -333,6 +413,76 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_reset_countdowns() {
+        let now = parse_iso_ms("2026-11-05T10:00:00+00:00").unwrap();
+        assert_eq!(
+            format_reset("2026-11-05T11:40:00+00:00", now).as_deref(),
+            Some("1h 40m")
+        );
+        assert_eq!(
+            format_reset("2026-11-05T10:05:00+00:00", now).as_deref(),
+            Some("5m")
+        );
+        assert_eq!(
+            format_reset("2026-11-07T13:00:00+00:00", now).as_deref(),
+            Some("2d 3h")
+        );
+        assert_eq!(
+            format_reset("in 4 hr 33 min", now).as_deref(),
+            Some("4h 33m")
+        );
+        assert_eq!(format_reset("in 2 hr", now).as_deref(), Some("2h"));
+        assert_eq!(
+            format_reset("Sun 4:00 AM", now).as_deref(),
+            Some("Sun 4:00 AM")
+        );
+    }
+
+    #[test]
+    fn session_name_and_branch_are_opt_in() {
+        let result = DetectionResult {
+            client: ClientType::Code,
+            session_title: Some("Fix login".into()),
+            git_branch: Some("main".into()),
+            ..DetectionResult::default()
+        };
+        let mut config = ClaudeConfig::default();
+        assert_eq!(build_details(&result, "playing", &config), "Claude Code");
+        config.show_session_name = true;
+        config.show_branch = true;
+        assert_eq!(
+            build_details(&result, "playing", &config),
+            "Claude Code · Fix login · main"
+        );
+        assert_eq!(
+            render_template("{session} on {branch}", &result).as_deref(),
+            Some("Fix login on main")
+        );
+    }
+
+    #[test]
+    fn any_recent_private_session_hides_the_activity() {
+        let config = ClaudeConfig {
+            private_projects: vec!["secret".into()],
+            ..ClaudeConfig::default()
+        };
+        let mut result = DetectionResult {
+            client: ClientType::Code,
+            project_dir: Some(r"D:\work\public".into()),
+            recent_project_dirs: vec![r"D:\work\public".into()],
+            ..DetectionResult::default()
+        };
+        assert_eq!(hidden_reason(&result, &config), None);
+        result.recent_project_dirs.push(r"D:\work\Secret".into());
+        assert_eq!(hidden_reason(&result, &config), Some("private"));
+        // A CLI in a private folder beside Desktop's Chat tab also hides it.
+        result.client = ClientType::Desktop;
+        result.mode = Some("Chat".into());
+        result.cli_alongside = true;
+        assert_eq!(hidden_reason(&result, &config), Some("private"));
+    }
 
     #[test]
     fn renders_custom_templates() {
@@ -376,6 +526,15 @@ mod tests {
         assert!(is_private_project("D:/clients/acme/api", &entries));
         assert!(!is_private_project(r"D:\clientsx\acme", &entries));
         assert!(!is_private_project(r"D:\work\claude-rpc", &entries));
+        // Accented capitals fold too, as in Windows paths.
+        assert!(is_private_project(r"D:\Écoles", &["écoles".into()]));
+        // A worktree session matches its project by name or path, or itself.
+        let worktree = r"D:\work\Secret-App\.claude\worktrees\loving-shamir";
+        assert!(is_private_project(worktree, &entries));
+        assert!(is_private_project(worktree, &["D:/work/secret-app".into()]));
+        assert!(is_private_project(worktree, &["loving-shamir".into()]));
+        assert!(!is_private_project(worktree, &["other".into()]));
+        assert_eq!(project_name(Some(worktree)).as_deref(), Some("Secret-App"));
 
         let config = ClaudeConfig {
             private_projects: entries,

@@ -407,6 +407,9 @@ mod tests {
             started_at_ms: None,
             model: Some("Claude Opus 5.5".into()),
             cwd: None,
+            title: None,
+            branch: None,
+            recent_cwds: Vec::new(),
         };
         // A loose UI match in the Code tab loses to the session log.
         let loose = DesktopInfo {

@@ -1,25 +1,129 @@
 use super::*;
 
-pub(super) fn read_session_info() -> Option<SessionInfo> {
-    let file = find_latest_jsonl_file(&claude_dir().join("projects"), 24 * 60 * 60 * 1000)?;
+// Sessions written within this window count as running for the private
+// projects check, even when another session's log is the latest.
+const RECENT_SESSION_MS: u64 = 10 * 60 * 1_000;
+
+// Per session log: (mtime when read, time of its latest prompt typed by the user).
+pub(super) type PromptCache = HashMap<PathBuf, (u64, Option<u64>)>;
+
+pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo> {
+    let mut candidates =
+        collect_jsonl_candidates(&claude_dir().join("projects"), 24 * 60 * 60 * 1000);
+    candidates.sort_by_key(|(_, mtime)| std::cmp::Reverse(*mtime));
+    let now = now_ms();
+    let mut recent = Vec::new();
+    let mut recent_cwds = Vec::new();
+    for (path, mtime) in &candidates {
+        if now.saturating_sub(*mtime) > RECENT_SESSION_MS {
+            break;
+        }
+        if let Some(cwd) = read_session_cwd(path).filter(|cwd| is_user_project_cwd(cwd)) {
+            recent_cwds.push(cwd);
+            recent.push((path.clone(), *mtime));
+        }
+    }
+    prompts.retain(|path, _| recent.iter().any(|(recent, _)| recent == path));
+    // Several sessions write at once (agents working in the background): the
+    // one in use is the one the user typed in last, not the last one written.
+    let file = match recent
+        .iter()
+        .max_by_key(|(path, mtime)| (latest_prompt_ms(prompts, path, *mtime), *mtime))
+    {
+        Some((path, _)) => path.clone(),
+        None => candidates
+            .into_iter()
+            .find(|(path, _)| is_user_session_file(path))
+            .map(|(path, _)| path)?,
+    };
     let started_at_ms = read_session_start_ms(&file);
-    let model = read_session_tail(&file);
+    let lines = read_tail_lines(&file, 256 * 1024).unwrap_or_default();
+    let model = model_from_lines(&lines);
+    let (title, branch) = meta_from_lines(&lines);
     let cwd = read_session_cwd(&file);
     Some(SessionInfo {
         file,
         started_at_ms,
         model,
         cwd,
+        title,
+        branch,
+        recent_cwds,
     })
 }
 
-pub(super) fn find_latest_jsonl_file(root: &Path, max_age_ms: u64) -> Option<PathBuf> {
-    let mut candidates = collect_jsonl_candidates(root, max_age_ms);
-    candidates.sort_by_key(|(_, mtime)| std::cmp::Reverse(*mtime));
-    candidates
-        .into_iter()
-        .find(|(path, _)| is_user_session_file(path))
-        .map(|(path, _)| path)
+fn latest_prompt_ms(prompts: &mut PromptCache, path: &Path, mtime: u64) -> Option<u64> {
+    let cached = prompts.get(path).copied();
+    if let Some((_, prompt)) = cached.filter(|(read_at, _)| *read_at == mtime) {
+        return prompt;
+    }
+    // The prompt can scroll out of the tail while an agent works: keep the
+    // last one seen.
+    let prompt = read_tail_lines(path, 512 * 1024)
+        .and_then(|lines| prompt_from_lines(&lines))
+        .or(cached.and_then(|(_, prompt)| prompt));
+    prompts.insert(path.to_path_buf(), (mtime, prompt));
+    prompt
+}
+
+// Time of the latest message the user typed (not a tool result, command
+// output or subagent turn).
+pub(super) fn prompt_from_lines(lines: &[String]) -> Option<u64> {
+    lines.iter().rev().find_map(|line| {
+        let entry = serde_json::from_str::<Value>(line).ok()?;
+        if entry.get("type").and_then(Value::as_str) != Some("user")
+            || is_sidechain_entry(&entry)
+            || entry.get("isMeta").and_then(Value::as_bool) == Some(true)
+        {
+            return None;
+        }
+        let human = match entry.pointer("/origin/kind").and_then(Value::as_str) {
+            Some(kind) => kind == "human",
+            // Older Claude Code versions have no origin field.
+            None => match entry.pointer("/message/content")? {
+                Value::String(text) => !text.trim_start().starts_with('<'),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .all(|block| block.get("type").and_then(Value::as_str) == Some("text")),
+                _ => false,
+            },
+        };
+        if !human {
+            return None;
+        }
+        parse_iso_ms(entry.get("timestamp")?.as_str()?)
+    })
+}
+
+// Latest session title ("custom-title": set by /rename or by Claude Desktop)
+// and git branch of the main thread. Metadata fields only, never chat text.
+pub(super) fn meta_from_lines(lines: &[String]) -> (Option<String>, Option<String>) {
+    let mut title = None;
+    let mut branch = None;
+    for line in lines.iter().rev() {
+        if title.is_some() && branch.is_some() {
+            break;
+        }
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if title.is_none() && entry.get("type").and_then(Value::as_str) == Some("custom-title") {
+            // Line breaks become spaces instead of gluing words together.
+            let raw = entry
+                .get("customTitle")
+                .and_then(Value::as_str)
+                .map(|title| title.replace(|ch: char| ch.is_control(), " "));
+            title = sanitize_field(raw.as_deref(), 100);
+        }
+        if branch.is_none() && !is_sidechain_entry(&entry) {
+            branch = entry
+                .get("gitBranch")
+                .and_then(Value::as_str)
+                .filter(|branch| *branch != "HEAD")
+                .and_then(|branch| sanitize_field(Some(branch), 60));
+        }
+    }
+    (title, branch)
 }
 
 pub(super) fn collect_jsonl_candidates(root: &Path, max_age_ms: u64) -> Vec<(PathBuf, u64)> {
@@ -90,10 +194,24 @@ pub(super) fn read_session_cwd(path: &Path) -> Option<String> {
     None
 }
 
+// Claude Desktop runs worktree sessions in <project>\.claude\worktrees\<name>:
+// they belong to <project>. Other paths are returned unchanged.
+pub(super) fn project_root(cwd: &str) -> &str {
+    const MARKER: &str = "/.claude/worktrees/";
+    // Same byte offsets as `cwd`: '\' and '/' are one byte each and ASCII
+    // lowercasing leaves every other byte as is.
+    let lower = cwd.replace('\\', "/").to_ascii_lowercase();
+    match lower.find(MARKER) {
+        Some(index) if index > 0 => &cwd[..index],
+        _ => cwd,
+    }
+}
+
 pub(super) fn is_user_project_cwd(cwd: &str) -> bool {
     // Reject sessions whose cwd lives inside a hidden directory (e.g. C:\Users\x\.claude-mem\...)
     // Background subagents/observers run from these; real Claude Code sessions don't.
-    cwd.split(['/', '\\'])
+    project_root(cwd)
+        .split(['/', '\\'])
         .filter(|seg| !seg.is_empty())
         .all(|seg| !seg.starts_with('.') || seg.chars().all(|c| c == '.'))
 }
@@ -123,8 +241,12 @@ pub(super) fn read_session_start_ms(path: &Path) -> Option<u64> {
     None
 }
 
+#[cfg(test)]
 pub(super) fn read_session_tail(path: &Path) -> Option<String> {
-    let lines = read_tail_lines(path, 256 * 1024)?;
+    model_from_lines(&read_tail_lines(path, 256 * 1024)?)
+}
+
+pub(super) fn model_from_lines(lines: &[String]) -> Option<String> {
     // Pass 1: latest "/model" command anywhere — user-set model wins
     for line in lines.iter().rev() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -190,6 +312,54 @@ pub(super) fn read_tail_lines(path: &Path, max_bytes: u64) -> Option<Vec<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_session_title_and_branch() {
+        let lines = [
+            json!({"type": "custom-title", "customTitle": "Old name"}),
+            json!({"type": "user", "gitBranch": "feature/x", "message": {"content": "type custom-title"}}),
+            json!({"type": "assistant", "gitBranch": "agent-branch", "isSidechain": true}),
+            json!({"type": "custom-title", "customTitle": "Fix <login>
+bug"}),
+        ]
+        .map(|entry| entry.to_string());
+        let (title, branch) = meta_from_lines(&lines);
+        assert_eq!(title.as_deref(), Some("Fix login bug"));
+        assert_eq!(branch.as_deref(), Some("feature/x"));
+        assert_eq!(meta_from_lines(&[]), (None, None));
+    }
+
+    #[test]
+    fn worktree_sessions_belong_to_their_project() {
+        let worktree = r"D:\Dev\relay-bot\.claude\worktrees\loving-shamir";
+        assert_eq!(project_root(worktree), r"D:\Dev\relay-bot");
+        assert_eq!(
+            project_root("D:/Dev/app/.Claude/Worktrees/x/src"),
+            "D:/Dev/app"
+        );
+        assert_eq!(project_root(r"D:\Dev\app"), r"D:\Dev\app");
+        assert!(is_user_project_cwd(worktree));
+        assert!(!is_user_project_cwd(r"C:\Users\x\.claude-mem\observer"));
+        assert!(!is_user_project_cwd(r"C:\Users\x\.claude\projects"));
+    }
+
+    #[test]
+    fn finds_the_latest_typed_prompt() {
+        let lines = [
+            json!({"type": "user", "timestamp": "2026-11-05T10:00:00Z", "origin": {"kind": "human"}, "message": {"content": "hi"}}),
+            json!({"type": "user", "timestamp": "2026-11-05T10:01:00Z", "message": {"content": "legacy prompt"}}),
+            json!({"type": "user", "timestamp": "2026-11-05T10:02:00Z", "message": {"content": [{"type": "tool_result"}]}}),
+            json!({"type": "user", "timestamp": "2026-11-05T10:03:00Z", "message": {"content": "<local-command-stdout>x</local-command-stdout>"}}),
+            json!({"type": "user", "timestamp": "2026-11-05T10:04:00Z", "isSidechain": true, "message": {"content": "agent"}}),
+            json!({"type": "user", "timestamp": "2026-11-05T10:05:00Z", "origin": {"kind": "task-notification"}, "message": {"content": "done"}}),
+        ]
+        .map(|entry| entry.to_string());
+        assert_eq!(
+            prompt_from_lines(&lines),
+            parse_iso_ms("2026-11-05T10:01:00Z")
+        );
+        assert_eq!(prompt_from_lines(&lines[2..]), None);
+    }
 
     #[test]
     fn conversation_text_never_becomes_the_published_model() {

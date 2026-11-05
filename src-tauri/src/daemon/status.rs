@@ -83,6 +83,9 @@ pub(super) fn build_status(
         // Session start (Discord's "elapsed" timer), for the settings preview
         // and the tray footer.
         "credits": result.credits,
+        // Private: tray menu only. Discord shows them only when enabled.
+        "sessionTitle": result.session_title,
+        "gitBranch": result.git_branch,
         "startedAtMs": if result.client == ClientType::Idle {
             None
         } else {

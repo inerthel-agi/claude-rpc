@@ -18,6 +18,7 @@ const {
 const $ = (selector) => document.querySelector(selector);
 const menu = $('#menu');
 const modelLine = $('#model-line');
+const sessionLine = $('#session-line');
 const clientPill = $('#client-pill');
 const clientLabel = $('#client-label');
 const hero = $('#hero');
@@ -73,14 +74,13 @@ function fitWindow() {
 }
 
 function applyTheme() {
-  const saved = localStorage.getItem('claude-rpc-theme') || 'dark';
-  const resolved =
-    saved === 'system'
-      ? window.matchMedia('(prefers-color-scheme: light)').matches
-        ? 'light'
-        : 'dark'
-      : saved;
-  document.body.dataset.theme = ['dark', 'light'].includes(resolved) ? resolved : 'dark';
+  let saved = 'dark';
+  try {
+    saved = localStorage.getItem('claude-rpc-theme') || 'dark';
+  } catch {
+    /* storage unavailable */
+  }
+  window.RpcShared.setTheme(saved);
 }
 
 const pausedUntil = (state) => (state && state.pauseUntilMs > Date.now() ? state.pauseUntilMs : 0);
@@ -151,6 +151,11 @@ function renderStatus(status) {
   modelLine.textContent = client.running
     ? [model || 'Claude', effort].filter(Boolean).join(' · ')
     : t('tray.notRunning');
+  // Session title and branch: private to this menu unless enabled for Discord.
+  const session = [status.sessionTitle, status.gitBranch].filter(Boolean).join(' · ');
+  sessionLine.textContent = session;
+  sessionLine.title = session;
+  sessionLine.hidden = !client.running || !session;
   clientPill.classList.toggle('on', client.running);
   clientLabel.textContent = client.label;
 
@@ -265,8 +270,38 @@ async function refreshStatus() {
   fitWindow();
 }
 
+// Hides the sections turned off in Settings, then drops separators left
+// doubled or dangling, and the usage block when nothing is left in it.
+function applyTraySections() {
+  const hidden = new Set(window.RpcShared.readTrayHidden());
+  document.querySelectorAll('[data-section]').forEach((el) => {
+    el.classList.toggle('user-hidden', hidden.has(el.dataset.section));
+  });
+  const usage = $('#usage');
+  usage.classList.toggle(
+    'user-hidden',
+    ['usage', 'limits', 'credits'].every((id) => hidden.has(id)),
+  );
+  let previousSep = null;
+  let seenContent = false;
+  [...menu.children].forEach((el) => {
+    if (!el.classList.contains('sep')) {
+      if (!el.classList.contains('user-hidden') && !el.hidden) {
+        seenContent = true;
+        previousSep = null;
+      }
+      return;
+    }
+    el.classList.remove('user-hidden');
+    if (!seenContent || previousSep) el.classList.add('user-hidden');
+    else previousSep = el;
+  });
+}
+
 async function refresh() {
+  applyTraySections();
   applyTheme();
+  window.RpcShared.setDesign(window.RpcShared.readDesign());
   try {
     render(await invoke('tray_state'));
   } catch {
@@ -349,6 +384,18 @@ document.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('focus', refresh);
+// The settings window changed the style or theme while the menu is open.
+window.addEventListener('storage', (event) => {
+  if (event.key === window.RpcShared.TRAY_HIDDEN_KEY) {
+    applyTraySections();
+    fitWindow();
+  }
+  if (event.key === window.RpcShared.DESIGN_KEY || event.key === 'claude-rpc-theme') {
+    applyTheme();
+    window.RpcShared.setDesign(window.RpcShared.readDesign());
+    fitWindow();
+  }
+});
 // Keep the card live while the menu is open.
 let polling = false;
 setInterval(async () => {

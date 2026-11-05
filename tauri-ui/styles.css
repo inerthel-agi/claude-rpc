@@ -33,6 +33,9 @@
   --ok-weak: rgba(76, 183, 130, 0.14);
   --warn: #d9a441;
   --danger: #e5484d;
+  --on-accent: #ffffff;
+  --radius: 12px;
+  --radius-sm: 8px;
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -398,7 +401,7 @@ button:disabled {
 .btn.primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -1205,4 +1208,1196 @@ input.invalid {
 
 .usage-card .bar[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* UI styles (body[data-design]): General > Appearance > UI style.    */
+/* Each one redefines the palette for dark and light, then its shape. */
+/* ------------------------------------------------------------------ */
+
+/* Split Studio's pinned column exists only in that style. */
+.pin {
+  display: none;
+}
+
+/* ---------- Discord Bento ---------- */
+body[data-design='bento'] {
+  --bg: #1e1f22;
+  --sidebar: #1e1f22;
+  --surface: #2b2d31;
+  --raised: #383a40;
+  --input: #1e1f22;
+  --line: #3f4147;
+  --line-strong: #4e5058;
+  --muted: #b5bac1;
+  --text-2: #dbdee1;
+  --text: #f2f3f5;
+  --accent: #5865f2;
+  --accent-weak: rgba(88, 101, 242, 0.18);
+  --focus: rgba(88, 101, 242, 0.4);
+  --hover: #35373c;
+  --active: #404249;
+  --ok: #23a55a;
+  --ok-weak: rgba(35, 165, 90, 0.16);
+  --warn: #f0b232;
+  --danger: #f23f43;
+  --nitro: linear-gradient(135deg, #5865f2 0%, #9b59f6 52%, #eb459e 100%);
+  --radius: 16px;
+}
+
+body[data-design='bento'][data-theme='light'] {
+  --bg: #f2f3f5;
+  --sidebar: #e3e5e8;
+  --surface: #ffffff;
+  --raised: #ebedef;
+  --input: #f2f3f5;
+  --line: #e1e2e4;
+  --line-strong: #c4c9ce;
+  --muted: #5c5e66;
+  --text-2: #4e5058;
+  --text: #313338;
+  --accent: #5865f2;
+  --accent-weak: rgba(88, 101, 242, 0.12);
+  --hover: #e8e9eb;
+  --active: #dfe1e5;
+  --ok: #1f8b4c;
+  --warn: #a86d00;
+  --danger: #da373c;
+}
+
+body[data-design='bento'] .group,
+body[data-design='bento'] .about-card,
+body[data-design='bento'] .info {
+  border-color: transparent;
+  border-radius: var(--radius);
+}
+
+body[data-design='bento'] .nav-item {
+  border-radius: 6px;
+}
+
+/* Nitro banner on the Live Preview card, avatar overlapping it */
+body[data-design='bento'] .preview {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+body[data-design='bento'] .preview-top {
+  min-height: 62px;
+  margin: 0;
+  padding: 12px 16px 0;
+  background: var(--nitro);
+  color: #ffffff;
+}
+
+body[data-design='bento'] .preview-top .hint {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+body[data-design='bento'] .activity {
+  align-items: flex-start;
+  padding: 0 16px 16px;
+}
+
+body[data-design='bento'] .art {
+  margin-top: -28px;
+  border: 5px solid var(--surface);
+  border-radius: 50%;
+}
+
+body[data-design='bento'] .preview-copy {
+  padding-top: 10px;
+}
+
+body[data-design='bento'] .live-dot {
+  right: -3px;
+  bottom: -3px;
+}
+
+body[data-design='bento'] .mode {
+  height: 54px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+body[data-design='bento'] .mode[aria-checked='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-weak);
+}
+
+/* Bento grid: each gauge is a tile, the first one spans the row */
+body[data-design='bento'] .usage-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-design='bento'] .usage-limits {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+body[data-design='bento'] .usage-limits > .limit,
+body[data-design='bento'] #credits-section .usage-card {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+body[data-design='bento'] .usage-limits > .limit:first-child {
+  grid-column: 1 / -1;
+}
+
+body[data-design='bento'] .usage-top {
+  margin-bottom: 10px;
+}
+
+body[data-design='bento'] .bar {
+  height: 8px;
+}
+
+body[data-design='bento'] .check.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+body[data-design='bento'] .btn.done {
+  border-color: var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* ---------- Claude Code TUI ---------- */
+body[data-design='tui'] {
+  --font-sans: ui-monospace, 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+  --bg: #0c0c0c;
+  --sidebar: #0c0c0c;
+  --surface: #121212;
+  --raised: #1a1a1a;
+  --input: #0c0c0c;
+  --line: #2a2a2a;
+  --line-strong: #3d3d3d;
+  --muted: #8a8a8a;
+  --text-2: #cfcfcf;
+  --text: #e8e8e8;
+  --accent: #ef8257;
+  --accent-weak: rgba(239, 130, 87, 0.14);
+  --focus: rgba(239, 130, 87, 0.35);
+  --hover: #1c1c1c;
+  --active: #242424;
+  --knob: #0c0c0c;
+  --ok: #5fd787;
+  --ok-weak: rgba(95, 215, 135, 0.14);
+  --warn: #e5c07b;
+  --danger: #ff6b6b;
+  --on-accent: #0c0c0c;
+  --radius: 6px;
+  --radius-sm: 4px;
+  font-size: 12.5px;
+}
+
+body[data-design='tui'][data-theme='light'] {
+  --bg: #f4f1ea;
+  --sidebar: #f4f1ea;
+  --surface: #fbf9f4;
+  --raised: #ebe7dd;
+  --input: #ffffff;
+  --line: #d9d4c7;
+  --line-strong: #b8b2a3;
+  --muted: #6f6a5f;
+  --text-2: #33302a;
+  --text: #1a1814;
+  --accent: #b84d24;
+  --accent-weak: rgba(184, 77, 36, 0.12);
+  --hover: #ece8de;
+  --active: #e3ded2;
+  --knob: #ffffff;
+  --ok: #2b8a4e;
+  --warn: #8a6100;
+  --danger: #c0392b;
+  --on-accent: #ffffff;
+}
+
+body[data-design='tui'] .group,
+body[data-design='tui'] .preview,
+body[data-design='tui'] .usage-card,
+body[data-design='tui'] .about-card,
+body[data-design='tui'] .info,
+body[data-design='tui'] .banner,
+body[data-design='tui'] .notice,
+body[data-design='tui'] input,
+body[data-design='tui'] textarea,
+body[data-design='tui'] select,
+body[data-design='tui'] .btn,
+body[data-design='tui'] .mode,
+body[data-design='tui'] .art,
+body[data-design='tui'] .app-icon,
+body[data-design='tui'] .nav-item {
+  border-radius: var(--radius);
+}
+
+body[data-design='tui'] .group,
+body[data-design='tui'] .preview,
+body[data-design='tui'] .usage-card,
+body[data-design='tui'] .about-card {
+  border-color: var(--line-strong);
+}
+
+body[data-design='tui'] .sidebar {
+  border-right-color: var(--line-strong);
+}
+
+body[data-design='tui'] .page-head h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+body[data-design='tui'] .page-head h1::before {
+  content: '> ';
+  color: var(--accent);
+}
+
+body[data-design='tui'] .group-title::before {
+  content: '## ';
+  color: var(--accent);
+}
+
+body[data-design='tui'] .nav-item[aria-current='page'] {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+/* Check chips read "[x] Effort" / "[ ] Effort" */
+body[data-design='tui'] .check::before,
+body[data-design='tui'] .check.active::before {
+  content: '[ ]';
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+body[data-design='tui'] .check.active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+body[data-design='tui'] .check.active::before {
+  content: '[x]';
+  color: var(--accent);
+}
+
+body[data-design='tui'] .check,
+body[data-design='tui'] .chip,
+body[data-design='tui'] .theme-switch,
+body[data-design='tui'] .theme-switch button,
+body[data-design='tui'] .plan-pill,
+body[data-design='tui'] .btn.done {
+  border-radius: var(--radius-sm);
+}
+
+body[data-design='tui'] .switch,
+body[data-design='tui'] .switch::after {
+  border-radius: 2px;
+}
+
+body[data-design='tui'] .mode[aria-checked='true'] {
+  border-color: var(--accent);
+  box-shadow: none;
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+body[data-design='tui'] .btn.done {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Segmented terminal gauges: blocks with gaps, track and fill alike */
+body[data-design='tui'] .bar {
+  height: 12px;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--active) 0 7px, transparent 7px 9px);
+}
+
+body[data-design='tui'] .bar i {
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--accent) 0 7px, transparent 7px 9px);
+}
+
+body[data-design='tui'] .bar i.warn {
+  background: repeating-linear-gradient(90deg, var(--warn) 0 7px, transparent 7px 9px);
+}
+
+body[data-design='tui'] .bar i.danger {
+  background: repeating-linear-gradient(90deg, var(--danger) 0 7px, transparent 7px 9px);
+}
+
+body[data-design='tui'] .limit-head b {
+  font-size: 16px;
+}
+
+body[data-design='tui'] .preview .eyebrow::before {
+  content: '$ ';
+  color: var(--accent);
+}
+
+/* ---------- Split Studio ---------- */
+/* Two columns: navigation and page on the left, the Discord preview and */
+/* the usage gauges pinned on the right. Anthropic palette.              */
+body[data-design='split'] .layout {
+  grid-template-columns: minmax(0, 1fr) 292px;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'side pin'
+    'main pin';
+}
+
+body[data-design='split'] .sidebar {
+  grid-area: side;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 20px 10px;
+  border-right: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+body[data-design='split'] .brand {
+  padding: 0;
+}
+
+body[data-design='split'] .brand-copy,
+body[data-design='split'] .side-foot {
+  display: none;
+}
+
+body[data-design='split'] .nav {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+body[data-design='split'] .nav-item {
+  height: 32px;
+  padding: 0 9px;
+  gap: 7px;
+}
+
+/* Icons only; the current page keeps its label. Hidden labels stay */
+/* readable to screen readers.                                      */
+body[data-design='split'] .nav-item:not([aria-current='page']) span:first-of-type {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+body[data-design='split'] .main {
+  grid-area: main;
+  padding-top: 0;
+}
+
+body[data-design='split'] .content {
+  padding: 18px 24px 24px;
+}
+
+body[data-design='split'] .footer {
+  padding: 10px 20px 10px 24px;
+}
+
+body[data-design='split'] .pin {
+  grid-area: pin;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 44px 16px 16px;
+  border-left: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
+body[data-design='split'] .pin .activity {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+body[data-design='split'] .pin .art {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+}
+
+body[data-design='split'] .pin .art img {
+  width: 38px;
+  height: 38px;
+}
+
+body[data-design='split'] .pin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+body[data-design='split'] .pin .usage-limits {
+  gap: 14px;
+}
+
+body[data-design='split'] .pin .limit-head b {
+  font-size: 17px;
+}
+
+/* ---------- Fluent Mica (Windows 11) ---------- */
+body[data-design='mica'] {
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --bg: #202020;
+  --sidebar: #202020;
+  --surface: #2b2b2b;
+  --raised: #323232;
+  --input: #2d2d2d;
+  --line: #1d1d1d;
+  --line-strong: #474747;
+  --muted: #a0a0a0;
+  --text-2: #d1d1d1;
+  --text: #ffffff;
+  --accent: #60cdff;
+  --accent-weak: rgba(96, 205, 255, 0.14);
+  --focus: rgba(96, 205, 255, 0.4);
+  --hover: #2d2d2d;
+  --active: #383838;
+  --knob: #000000;
+  --ok: #6ccb5f;
+  --ok-weak: rgba(108, 203, 95, 0.14);
+  --warn: #fce100;
+  --danger: #ff99a4;
+  --on-accent: #000000;
+  --radius: 8px;
+  --radius-sm: 4px;
+  font-size: 14px;
+}
+
+body[data-design='mica'][data-theme='light'] {
+  --bg: #f3f3f3;
+  --sidebar: #f3f3f3;
+  --surface: #fbfbfb;
+  --raised: #f5f5f5;
+  --input: #ffffff;
+  --line: #e5e5e5;
+  --line-strong: #c4c4c4;
+  --muted: #616161;
+  --text-2: #3b3b3b;
+  --text: #1b1b1b;
+  --accent: #005fb8;
+  --accent-weak: rgba(0, 95, 184, 0.1);
+  --focus: rgba(0, 95, 184, 0.3);
+  --hover: #eaeaea;
+  --active: #e0e0e0;
+  --knob: #ffffff;
+  --ok: #0f7b0f;
+  --warn: #9d5d00;
+  --danger: #c42b1c;
+  --on-accent: #ffffff;
+}
+
+body[data-design='mica'] .sidebar {
+  border-right: 0;
+}
+
+body[data-design='mica'] .preview,
+body[data-design='mica'] .usage-card,
+body[data-design='mica'] .about-card,
+body[data-design='mica'] .info,
+body[data-design='mica'] .banner,
+body[data-design='mica'] .notice {
+  border-radius: var(--radius);
+}
+
+/* Fluent settings: every row is its own card */
+body[data-design='mica'] .group {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-design='mica'] .group > * {
+  padding-left: 16px;
+  padding-right: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+body[data-design='mica'] .group > * + * {
+  border-top: 1px solid var(--line);
+}
+
+body[data-design='mica'] .group > .group-note {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+}
+
+body[data-design='mica'] .nav-item {
+  position: relative;
+  border-radius: var(--radius-sm);
+  font-weight: 400;
+}
+
+body[data-design='mica'] .nav-item[aria-current='page'] {
+  background: var(--hover);
+  font-weight: 400;
+}
+
+/* Active tab indicator: Windows 11's vertical accent pill */
+body[data-design='mica'] .nav-item[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateY(-50%);
+}
+
+body[data-design='mica'] .btn,
+body[data-design='mica'] input,
+body[data-design='mica'] textarea,
+body[data-design='mica'] select,
+body[data-design='mica'] .mode,
+body[data-design='mica'] .theme-switch,
+body[data-design='mica'] .theme-switch button,
+body[data-design='mica'] .check,
+body[data-design='mica'] .chip,
+body[data-design='mica'] .btn.done {
+  border-radius: var(--radius-sm);
+}
+
+body[data-design='mica'] input:focus-visible,
+body[data-design='mica'] textarea:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+body[data-design='mica'] .mode[aria-checked='true'],
+body[data-design='mica'] .check.active,
+body[data-design='mica'] .btn.done {
+  border-color: var(--accent);
+  box-shadow: none;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Fluent toggle: outlined when off, filled with the accent when on */
+body[data-design='mica'] .switch {
+  width: 40px;
+  border: 1px solid var(--muted);
+  background: transparent;
+}
+
+body[data-design='mica'] .switch::after {
+  top: 3px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
+  background: var(--muted);
+}
+
+body[data-design='mica'] .switch.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+body[data-design='mica'] .switch.active::after {
+  background: var(--knob);
+  transform: translateX(19px);
+}
+
+body[data-design='mica'] .bar {
+  height: 4px;
+}
+
+body[data-design='split'] .pin .limit-meta {
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion. Every animation below is off under prefers-reduced-motion  */
+/* (the rule near the top of the UI styles section and at the end).   */
+/* ------------------------------------------------------------------ */
+
+/* Style or theme switch: colours, borders and corners crossfade */
+body.switching,
+body.switching * {
+  transition:
+    background-color 0.35s var(--ease),
+    border-color 0.35s var(--ease),
+    color 0.35s var(--ease),
+    border-radius 0.35s var(--ease),
+    box-shadow 0.35s var(--ease) !important;
+}
+
+/* A page slides in when you open it */
+.page:not([hidden]) {
+  animation: page-in 0.26s var(--ease) both;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Its blocks follow one after the other */
+.page:not([hidden]) > * {
+  animation: rise 0.34s var(--ease) both;
+}
+
+.page:not([hidden]) > :nth-child(2) { animation-delay: 0.03s; }
+.page:not([hidden]) > :nth-child(3) { animation-delay: 0.06s; }
+.page:not([hidden]) > :nth-child(4) { animation-delay: 0.09s; }
+.page:not([hidden]) > :nth-child(5) { animation-delay: 0.12s; }
+.page:not([hidden]) > :nth-child(6) { animation-delay: 0.15s; }
+.page:not([hidden]) > :nth-child(n + 7) { animation-delay: 0.18s; }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Gauges fill from the left when they appear (clip keeps TUI segments) */
+.bar i {
+  animation: bar-grow 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes bar-grow {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.spark-line {
+  stroke-dasharray: 1200;
+  animation: draw 1.1s var(--ease) both;
+}
+
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1200;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.spark-area {
+  animation: fade 0.9s 0.2s var(--ease) both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The live dot breathes while the card is on Discord */
+.live-dot {
+  animation: live 2.4s ease-in-out infinite;
+}
+
+@keyframes live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+}
+
+/* Small feedback on every control */
+.btn,
+.check,
+.chip,
+.mode,
+.var,
+.nav-item,
+.link-row {
+  transition:
+    background-color 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    color 0.15s var(--ease),
+    transform 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.btn:active:not(:disabled),
+.check:active:not(:disabled),
+.chip:active:not(:disabled),
+.mode:active,
+.var:active {
+  transform: scale(0.96);
+}
+
+.nav-item svg {
+  transition: transform 0.2s var(--ease);
+}
+
+.nav-item:hover svg {
+  transform: translateX(2px);
+}
+
+.link-row svg {
+  transition: transform 0.2s var(--ease), color 0.15s var(--ease);
+}
+
+.link-row:hover svg {
+  transform: translate(2px, -2px);
+}
+
+.check.active::before {
+  animation: tick 0.22s var(--ease);
+}
+
+@keyframes tick {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+.switch::after {
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.18s var(--ease);
+}
+
+.banner {
+  animation: rise 0.3s var(--ease) both;
+}
+
+/* ---------- Discord Bento motion ---------- */
+body[data-design='bento'] .preview-top,
+body[data-design='bento'] {
+  --nitro-size: 220% 220%;
+}
+
+body[data-design='bento'] .preview-top {
+  background-size: var(--nitro-size);
+  animation: nitro 9s ease-in-out infinite alternate;
+}
+
+@keyframes nitro {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+body[data-design='bento'] .usage-limits > .limit,
+body[data-design='bento'] .mode,
+body[data-design='bento'] .group,
+body[data-design='bento'] .about-card {
+  transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease), background-color 0.15s var(--ease);
+}
+
+body[data-design='bento'] .usage-limits > .limit:hover,
+body[data-design='bento'] .mode:hover,
+body[data-design='bento'] .about-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+}
+
+body[data-design='bento'] .art {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+body[data-design='bento'] .preview:hover .art {
+  transform: scale(1.05) rotate(-3deg);
+}
+
+/* ---------- Claude Code TUI motion ---------- */
+body[data-design='tui'] .page-head h1::after {
+  content: '\258C';
+  margin-left: 4px;
+  color: var(--accent);
+  animation: blink 1.05s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Lines "print" in like terminal output */
+body[data-design='tui'] .page:not([hidden]) > * {
+  animation: type-in 0.28s steps(6) both;
+}
+
+@keyframes type-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+body[data-design='tui'] .bar i {
+  animation: bar-grow 0.9s steps(14) both;
+}
+
+body[data-design='tui'] .nav-item:hover svg {
+  transform: none;
+}
+
+body[data-design='tui'] .nav-item:hover span:first-of-type::before {
+  content: '> ';
+  color: var(--accent);
+}
+
+/* ---------- Split Studio motion ---------- */
+body[data-design='split'] .pin > *,
+body[data-design='split'] .pin-usage {
+  animation: slide-left 0.38s var(--ease) both;
+}
+
+body[data-design='split'] .pin-usage {
+  animation-delay: 0.08s;
+}
+
+@keyframes slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+body[data-design='split'] .nav-item[aria-current='page'] {
+  animation: pill 0.25s var(--ease);
+}
+
+@keyframes pill {
+  from {
+    transform: scale(0.92);
+  }
+}
+
+/* ---------- Fluent Mica motion ---------- */
+body[data-design='mica'] .nav-item[aria-current='page']::before {
+  animation: indicator 0.28s cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes indicator {
+  from {
+    transform: translateY(-50%) scaleY(0);
+  }
+  to {
+    transform: translateY(-50%) scaleY(1);
+  }
+}
+
+/* Fluent "entrance": cards come up quickly and settle */
+body[data-design='mica'] .page:not([hidden]) > * {
+  animation: fluent-in 0.4s cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes fluent-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+body[data-design='mica'] .group > * {
+  transition: background-color 0.12s var(--ease);
+}
+
+body[data-design='mica'] .group > .field-line:hover,
+body[data-design='mica'] .group > .field:hover,
+body[data-design='mica'] .group > .link-row:hover {
+  background: var(--raised);
+}
+
+/* ---------- Orbit: near-black canvas, soft blue glow, outlined cards ---------- */
+body[data-design='orbit'] {
+  --font-sans: 'Google Sans Text', 'Google Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --bg: #050506;
+  --sidebar: #0e0e10;
+  --surface: #0f0f11;
+  --raised: #2a2a2d;
+  --input: #1c1c1f;
+  --line: #2a2a2e;
+  --line-strong: #3c3c41;
+  --muted: #9aa0a6;
+  --text-2: #c4c7c5;
+  --text: #e8eaed;
+  --accent: #8ab4f8;
+  --accent-weak: rgba(138, 180, 248, 0.14);
+  --focus: rgba(138, 180, 248, 0.35);
+  --hover: #1d1d20;
+  --active: #2a2a2d;
+  --knob: #062e6f;
+  --ok: #81c995;
+  --ok-weak: rgba(129, 201, 149, 0.14);
+  --warn: #fdd663;
+  --danger: #f28b82;
+  --on-accent: #062e6f;
+  --glow: rgba(66, 133, 244, 0.18);
+  --radius: 12px;
+  --radius-sm: 8px;
+  font-size: 14px;
+}
+
+body[data-design='orbit'][data-theme='light'] {
+  --bg: #ffffff;
+  --sidebar: #f8f9fa;
+  --surface: #ffffff;
+  --raised: #e9eef6;
+  --input: #f1f3f4;
+  --line: #dadce0;
+  --line-strong: #bdc1c6;
+  --muted: #5f6368;
+  --text-2: #3c4043;
+  --text: #1f1f1f;
+  --accent: #0b57d0;
+  --accent-weak: rgba(11, 87, 208, 0.1);
+  --focus: rgba(11, 87, 208, 0.3);
+  --hover: #f1f3f4;
+  --active: #e9eef6;
+  --knob: #ffffff;
+  --ok: #137333;
+  --warn: #8a5a00;
+  --danger: #b3261e;
+  --on-accent: #ffffff;
+  --glow: rgba(11, 87, 208, 0.08);
+}
+
+/* The page sits on a dark canvas lit by a soft glow from the top */
+body[data-design='orbit'] .main {
+  background:
+    radial-gradient(70% 45% at 50% -12%, var(--glow), transparent 72%),
+    var(--bg);
+}
+
+body[data-design='orbit'] .footer {
+  background: transparent;
+}
+
+body[data-design='orbit'] .sidebar {
+  border-right-color: #1a1a1d;
+}
+
+body[data-design='orbit'][data-theme='light'] .sidebar {
+  border-right-color: var(--line);
+}
+
+body[data-design='orbit'] .nav-item {
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-weight: 400;
+}
+
+body[data-design='orbit'] .nav-item svg {
+  color: var(--muted);
+}
+
+body[data-design='orbit'] .nav-item[aria-current='page'] {
+  background: var(--active);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] .page-head h1 {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+body[data-design='orbit'] .group-title {
+  margin-top: 28px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* Outlined cards, rows divided by hairlines */
+body[data-design='orbit'] .group,
+body[data-design='orbit'] .preview,
+body[data-design='orbit'] .usage-card,
+body[data-design='orbit'] .about-card,
+body[data-design='orbit'] .info {
+  border-color: var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+body[data-design='orbit'] .field-copy > span {
+  font-weight: 500;
+}
+
+/* Pill controls */
+body[data-design='orbit'] select,
+body[data-design='orbit'] .theme-switch,
+body[data-design='orbit'] .theme-switch button,
+body[data-design='orbit'] .check,
+body[data-design='orbit'] .chip,
+body[data-design='orbit'] .plan-pill,
+body[data-design='orbit'] .btn.done {
+  border-radius: 999px;
+}
+
+body[data-design='orbit'] select {
+  height: 32px;
+  padding: 0 12px;
+  border-color: transparent;
+  background: var(--raised);
+}
+
+body[data-design='orbit'] .theme-switch {
+  background: transparent;
+}
+
+body[data-design='orbit'] .theme-switch button.active {
+  border-color: transparent;
+  background: var(--raised);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] .btn {
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] input,
+body[data-design='orbit'] textarea {
+  border-radius: var(--radius-sm);
+}
+
+body[data-design='orbit'] .check.active {
+  border-color: transparent;
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] .check.active::before {
+  color: var(--accent);
+}
+
+body[data-design='orbit'] .mode {
+  border-color: var(--line);
+  border-radius: 10px;
+}
+
+body[data-design='orbit'] .mode[aria-checked='true'] {
+  border-color: var(--line-strong);
+  box-shadow: none;
+  background: var(--raised);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] .switch {
+  border: 1px solid var(--line-strong);
+  background: var(--input);
+}
+
+body[data-design='orbit'] .switch::after {
+  top: 2px;
+  left: 2px;
+  background: var(--muted);
+}
+
+body[data-design='orbit'] .switch.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+body[data-design='orbit'] .switch.active::after {
+  background: var(--knob);
+}
+
+body[data-design='orbit'] .btn.done,
+body[data-design='orbit'] .btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+}
+
+body[data-design='orbit'] .var {
+  border-radius: 6px;
+}
+
+body[data-design='orbit'] .bar {
+  height: 4px;
+}
+
+
+/* ---------- OLED: true black for OLED screens, any style ---------- */
+body[data-oled][data-theme='dark'] {
+  --bg: #000000;
+  --sidebar: #000000;
+  --surface: #0a0a0a;
+  --raised: #141414;
+  --input: #000000;
+  --line: #1c1c1c;
+  --line-strong: #2e2e2e;
+  --hover: #121212;
+  --active: #1a1a1a;
+}
+
+body[data-oled][data-theme='dark'] .content::-webkit-scrollbar-thumb {
+  border-color: #000000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }

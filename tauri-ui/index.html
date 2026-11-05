@@ -129,6 +129,8 @@
                   <button type="button" id="plan-toggle" class="check" role="checkbox" data-i18n="labels.plan">Plan</button>
                   <button type="button" id="effort-toggle" class="check" role="checkbox" data-i18n="labels.effort">Effort</button>
                   <button type="button" id="sessions-toggle" class="check" role="checkbox" data-i18n="labels.sessions">Sessions</button>
+                  <button type="button" id="session-name-toggle" class="check" role="checkbox" data-i18n="labels.sessionName">Session name</button>
+                  <button type="button" id="branch-toggle" class="check" role="checkbox" data-i18n="labels.branch">Branch</button>
                   <button type="button" id="model-icon-toggle" class="check" role="checkbox" data-i18n="labels.modelIcon">Model icon</button>
                 </div>
               </div>
@@ -283,9 +285,21 @@
                 <span class="field-copy"><span data-i18n="app.theme">Theme</span></span>
                 <div class="theme-switch" role="radiogroup" data-i18n-aria="app.theme">
                   <button type="button" role="radio" data-theme-option="dark" data-i18n="theme.dark">Dark</button>
+                  <button type="button" role="radio" data-theme-option="oled" data-i18n="theme.oled" data-i18n-title="theme.oledHint">OLED</button>
                   <button type="button" role="radio" data-theme-option="system" data-i18n="theme.system">System</button>
                   <button type="button" role="radio" data-theme-option="light" data-i18n="theme.light">Light</button>
                 </div>
+              </div>
+              <div class="field-line">
+                <label class="field-copy" for="design"><span data-i18n="app.design">UI style</span><small data-i18n="app.designHint">Applies to this window and the tray menu.</small></label>
+                <select id="design">
+                  <option value="classic" data-i18n="design.classic">Classic</option>
+                  <option value="bento" data-i18n="design.bento">Discord Bento</option>
+                  <option value="tui" data-i18n="design.tui">Claude Code TUI</option>
+                  <option value="split" data-i18n="design.split">Split Studio</option>
+                  <option value="mica" data-i18n="design.mica">Fluent Mica</option>
+                  <option value="orbit" data-i18n="design.orbit">Orbit</option>
+                </select>
               </div>
               <div class="field-line">
                 <label class="field-copy" for="language"><span data-i18n="app.language">Language</span></label>
@@ -298,6 +312,29 @@
               <div class="field-line">
                 <span class="field-copy"><span data-i18n="general.startup">Start with Windows</span><small data-i18n="general.startupHint">Claude RPC starts in the tray when you sign in.</small></span>
                 <button type="button" id="startup-toggle" class="switch" role="switch" data-i18n-aria="general.startup"></button>
+              </div>
+            </div>
+
+            <h2 class="group-title" data-i18n="trayMenu.title">Tray menu</h2>
+            <div class="group">
+              <div class="field">
+                <div class="field-copy">
+                  <span data-i18n="trayMenu.show">Show in the tray menu</span>
+                  <small data-i18n="trayMenu.hint">Settings and Quit always stay.</small>
+                </div>
+                <div class="checks" id="tray-sections">
+                  <button type="button" class="check" role="checkbox" data-tray-section="session" data-i18n="trayMenu.session">Session name</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="usage" data-i18n="trayMenu.usage">5-hour session</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="chart" data-i18n="trayMenu.chart">24-hour chart</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="limits" data-i18n="trayMenu.limits">Weekly limits</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="credits" data-i18n="trayMenu.credits">Usage credits</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="pause" data-i18n="trayMenu.pause">Pause</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="activity" data-i18n="trayMenu.activity">Activity type</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="desktop" data-i18n="trayMenu.desktop">Open Claude Desktop</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="code" data-i18n="trayMenu.code">Launch Claude Code</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="update" data-i18n="trayMenu.update">Updates</button>
+                  <button type="button" class="check" role="checkbox" data-tray-section="footer" data-i18n="trayMenu.footer">Discord status</button>
+                </div>
               </div>
             </div>
 
@@ -361,6 +398,19 @@
           <button type="button" id="close" class="btn done" data-i18n="footer.done">Done</button>
         </footer>
       </div>
+
+      <!-- Split Studio: the Discord preview and the usage gauges stay pinned here -->
+      <aside class="pin" id="pin" data-i18n-aria="pin.label" aria-label="Live summary">
+        <div id="pin-preview-slot"></div>
+        <div class="usage-card pin-usage">
+          <div class="pin-head">
+            <span class="eyebrow" data-i18n="nav.usage">Usage</span>
+            <span class="plan-pill" id="pin-plan" hidden></span>
+          </div>
+          <div id="pin-limits" class="usage-limits"></div>
+          <p class="empty" id="pin-empty" data-i18n="usage.none" hidden>No usage yet.</p>
+        </div>
+      </aside>
     </div>
   </body>
 </html>
