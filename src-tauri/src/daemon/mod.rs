@@ -404,13 +404,13 @@ pub fn run(
     let mut last_key = String::new();
     let mut last_rpc_refresh_at = 0;
     let mut config_modified = modified_ms(&config_path);
-    let loaded = load_config(&config_path);
-    diag().config_error = loaded.as_ref().err().cloned();
-    // Same as config::load_or_paused, without reading the file twice.
-    let mut config = loaded.unwrap_or_else(|_| ClaudeConfig {
-        dnd: true,
-        ..ClaudeConfig::default()
-    });
+    let mut config = ClaudeConfig::default();
+    // Same as config::load_or_paused, without reading the file twice. An
+    // unreadable file is read again every second (it may be mid-write).
+    if !apply_loaded_config(&mut config, load_config(&config_path)) {
+        config_modified = None;
+    }
+    let mut config_retry_at = 0;
     let mut result = detect(&mut machine, limit_visibility(&config));
     let mut last_scan_at = 0;
     let mut last_status = Value::Null;
@@ -432,12 +432,11 @@ pub fn run(
         }
 
         let current_modified = modified_ms(&config_path);
-        if current_modified != config_modified {
-            config_modified = current_modified;
-            let loaded = load_config(&config_path);
-            diag().config_error = loaded.as_ref().err().cloned();
-            if let Ok(fresh) = loaded {
-                config = fresh;
+        if current_modified != config_modified && now_ms() >= config_retry_at {
+            if apply_loaded_config(&mut config, load_config(&config_path)) {
+                config_modified = current_modified;
+            } else {
+                config_retry_at = now_ms() + 1_000;
             }
             result = detect(&mut machine, limit_visibility(&config));
             last_scan_at = now_ms();
@@ -700,6 +699,23 @@ fn detect(machine: &mut StateMachine, limit_visibility: LimitVisibility) -> Dete
         history_5h: result.history_5h,
         credits: result.credits,
         ..DetectionResult::default()
+    }
+}
+
+// A readable config.json replaces the settings; an unreadable one pauses
+// publishing (the settings window says nothing is published) and keeps the rest.
+// Returns whether the file was read.
+fn apply_loaded_config(config: &mut ClaudeConfig, loaded: Result<ClaudeConfig, String>) -> bool {
+    diag().config_error = loaded.as_ref().err().cloned();
+    match loaded {
+        Ok(fresh) => {
+            *config = fresh;
+            true
+        }
+        Err(_) => {
+            config.dnd = true;
+            false
+        }
     }
 }
 
@@ -968,6 +984,23 @@ mod tests {
         assert_eq!(desktop_ui_ttl(10), 2_000);
         assert_eq!(desktop_ui_ttl(223), 4_460);
         assert_eq!(desktop_ui_ttl(1_000), 15_000);
+    }
+
+    #[test]
+    fn an_unreadable_config_pauses_publishing() {
+        let mut config = ClaudeConfig {
+            private_projects: vec!["secret".into()],
+            ..ClaudeConfig::default()
+        };
+        assert!(!apply_loaded_config(&mut config, Err("bad json".into())));
+        assert!(config.dnd);
+        assert_eq!(config.private_projects, ["secret"]);
+        // Readable again: its own settings apply, DND included.
+        assert!(apply_loaded_config(
+            &mut config,
+            Ok(ClaudeConfig::default())
+        ));
+        assert!(!config.dnd);
     }
 
     #[test]
