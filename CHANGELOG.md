@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v4.0.5 (2026-11-11)
 
 ### Fixed
 - **Start with Windows** showed as on when Windows had disabled the startup entry (Task Manager > Startup apps), so Claude RPC did not start at sign-in. The setting now shows the real state, and turning it on enables the entry again.
