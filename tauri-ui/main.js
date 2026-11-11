@@ -166,6 +166,9 @@ let currentConfig = {};
 // activity type while this window is open, so the form re-reads it instead of
 // overwriting it.
 let lastConfigJson = '';
+// config.json exists but cannot be read: never save over it with what the
+// form holds (defaults), until a later read succeeds.
+let configBroken = false;
 let messageState = { kind: '', key: 'footer.auto', time: null };
 let appVersion = '';
 let lastTemplateInput = fields.stateTemplate;
@@ -310,6 +313,12 @@ function showError(error) {
   renderMessage();
 }
 
+function setConfigBroken() {
+  configBroken = true;
+  showMessage('config.broken', 'error');
+  updatePreview();
+}
+
 function renderMessage() {
   const { key, kind, vars, time, text } = messageState;
   fields.message.textContent = key
@@ -327,12 +336,19 @@ async function syncConfigFromDisk() {
   try {
     config = await invoke('load_config');
   } catch {
+    if (!configBroken) setConfigBroken();
     return;
   }
   // An edit may have started while the file was being read.
   if (loading || saving || saveTimer) return;
   const json = JSON.stringify(config);
-  if (json !== lastConfigJson) {
+  if (configBroken) {
+    // Repaired: the form still holds defaults, so refill all of it.
+    configBroken = false;
+    lastConfigJson = json;
+    writeForm(config, true);
+    showMessage('footer.auto');
+  } else if (json !== lastConfigJson) {
     lastConfigJson = json;
     writeForm(config, false);
   }
@@ -401,9 +417,15 @@ async function load() {
     applyTheme(theme);
     applyDesign(readDesign());
     await invoke('start_daemon');
-    const config = await invoke('load_config');
-    lastConfigJson = JSON.stringify(config);
+    let config = {};
+    try {
+      config = await invoke('load_config');
+      lastConfigJson = JSON.stringify(config);
+    } catch {
+      configBroken = true;
+    }
     writeForm(config);
+    if (configBroken) showMessage('config.broken', 'error');
     await refreshStatus();
     await refreshStartup();
     loading = false;
@@ -634,6 +656,20 @@ function limitBlock(limit) {
   return block;
 }
 
+// A known limit that Claude has not reported: empty gauge and the reason.
+function missingLimitBlock(label) {
+  const block = limitBlock({ label, usedPercent: 0 });
+  block.classList.add('unknown');
+  block.querySelector('.limit-head b').textContent = '—';
+  const meta = document.createElement('div');
+  meta.className = 'limit-meta';
+  const note = document.createElement('span');
+  note.textContent = t('usage.fableMissing');
+  meta.append(note);
+  block.append(meta);
+  return block;
+}
+
 // Split Studio's pinned column: the 5-hour and weekly gauges.
 function renderPin(status) {
   const plan = planOf(status);
@@ -661,8 +697,12 @@ function renderUsage(status) {
 
   const limits = Array.isArray(status.limits) ? status.limits : [];
   fields.usageEmpty.hidden = limits.length > 0;
+  // The Fable weekly limit only comes from the account usage request or the
+  // Claude Desktop usage panel: keep its row, and say why it has no value.
+  const fable = limits.length > 0 && !limits.some((limit) => limit.label === 'Fable');
   fields.usageLimits.replaceChildren(
-    ...limits.map((limit) => {
+    ...(fable ? [...limits, { label: 'Fable', missing: true }] : limits).map((limit) => {
+      if (limit.missing) return missingLimitBlock(limit.label);
       const block = limitBlock(limit);
       if (limit.label === '5h') {
         const svg = sparkline(status.history5h, 64);
@@ -714,6 +754,7 @@ function renderCredits(raw) {
 
 // Why the card is not on Discord right now, or '' when it is.
 function hiddenReason(config) {
+  if (configBroken) return t('config.broken');
   if (config.dnd) return t('preview.dnd');
   if ((config.pauseUntilMs || 0) > Date.now()) {
     return t('preview.paused', { time: formatTime(new Date(config.pauseUntilMs)) });
@@ -822,16 +863,22 @@ function insertVariable(name) {
 // or the activity type since this form was filled. Those keep the disk value
 // unless they were changed in this window (the pause never is).
 async function save() {
+  if (configBroken) {
+    showMessage('config.broken', 'error');
+    return;
+  }
   saving = true;
   const changed = [...touchedTrayKeys];
   touchedTrayKeys.clear();
   try {
     const form = readForm();
-    let disk = currentConfig;
+    let disk;
     try {
       disk = await invoke('load_config');
     } catch {
-      /* keep the last known values */
+      changed.forEach((key) => touchedTrayKeys.add(key));
+      setConfigBroken();
+      return;
     }
     const config = { ...form, pauseUntilMs: disk.pauseUntilMs ?? 0 };
     for (const key of TRAY_KEYS) {

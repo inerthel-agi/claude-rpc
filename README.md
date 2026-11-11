@@ -88,7 +88,7 @@ Environment variables:
 | `CLAUDE_RPC_DIR` | `%USERPROFILE%\.claude-rpc` | Folder for settings, status, usage cache and usage history. |
 | `CLAUDE_DIR_PATH` | `%USERPROFILE%\.claude` | Claude Code data folder. |
 | `DISCORD_CLIENT_ID` | built-in application | Discord application used for the presence. |
-| `SCAN_INTERVAL_MS` | `250` | Process scan interval, minimum 250. |
+| `SCAN_INTERVAL_MS` | `1000` | Process scan interval, minimum 250. |
 | `CLAUDE_MODEL`, `ANTHROPIC_MODEL` | none | Model fallback when no session names one. |
 
 ## Detection
@@ -110,6 +110,7 @@ Environment variables:
 - Discord shows buttons only in `watching` mode. Without Discord Nitro on your account, other people do not see them.
 - The model icons load from this repository's `main` branch on GitHub.
 - Usage limits need a Claude subscription signed in to Claude Code, or Claude Desktop open.
+- Claude Code is detected from its `claude.exe` process. An install that runs through `node.exe` is not detected. A session inside WSL is not detected.
 
 ## License
 

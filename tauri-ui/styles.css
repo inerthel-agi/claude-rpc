@@ -866,6 +866,10 @@ input.invalid {
   background: var(--danger);
 }
 
+.limit.unknown .limit-head b {
+  color: var(--muted);
+}
+
 .limit-meta {
   display: flex;
   justify-content: space-between;

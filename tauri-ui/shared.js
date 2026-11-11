@@ -62,6 +62,7 @@
       'usage.refreshing': 'Refreshing…',
       'usage.none': 'No usage yet. It appears once Claude reports it.',
       'usage.used': 'used',
+      'usage.fableMissing': 'Not reported right now. Sign in again in Claude Code (/login), or open the usage panel in Claude Desktop.',
       'credits.title': 'Usage credits',
       'credits.spent': 'Spent',
       'credits.of': 'of {limit} this month',
@@ -155,6 +156,7 @@
       'footer.saved': 'Saved · {time}',
       'footer.saving': 'Saving…',
       'footer.done': 'Done',
+      'config.broken': 'config.json cannot be read. Fix or delete it; nothing is published meanwhile.',
       'update.available': 'Update available: v{version}',
       'update.now': 'Update now',
       'update.downloading': 'Downloading update…',
@@ -171,6 +173,7 @@
       'tray.5h': '5-hour session',
       'tray.weekly': 'Weekly',
       'tray.fable': 'Fable weekly',
+      'tray.notReported': 'Not reported',
       'tray.pause': 'Pause Discord presence',
       'tray.pausedUntil': 'Until {time}',
       'tray.pausedResume': 'Until you resume',
@@ -260,6 +263,7 @@
       'usage.refreshing': 'Actualisation…',
       'usage.none': 'Pas encore d’usage. Il s’affiche dès que Claude le transmet.',
       'usage.used': 'utilisés',
+      'usage.fableMissing': 'Non transmis pour l’instant. Reconnecte-toi dans Claude Code (/login), ou ouvre le panneau d’usage de Claude Desktop.',
       'credits.title': 'Crédits d’usage',
       'credits.spent': 'Dépensé',
       'credits.of': 'sur {limit} ce mois-ci',
@@ -353,6 +357,7 @@
       'footer.saved': 'Enregistré · {time}',
       'footer.saving': 'Enregistrement…',
       'footer.done': 'Terminé',
+      'config.broken': 'config.json est illisible. Corrige-le ou supprime-le ; rien n’est publié en attendant.',
       'update.available': 'Mise à jour disponible : v{version}',
       'update.now': 'Mettre à jour',
       'update.downloading': 'Téléchargement de la mise à jour…',
@@ -369,6 +374,7 @@
       'tray.5h': 'Session de 5 h',
       'tray.weekly': 'Semaine',
       'tray.fable': 'Fable (semaine)',
+      'tray.notReported': 'Non transmis',
       'tray.pause': 'Pause sur Discord',
       'tray.pausedUntil': 'Jusqu’à {time}',
       'tray.pausedResume': 'Jusqu’à la reprise',
@@ -478,8 +484,8 @@
   const EFFORTS = ['low', 'medium', 'high', 'extra high', 'xhigh', 'max', 'ultracode'];
   function describeModel(status) {
     const parts = ((status && status.modelLine) || '').split(' | ');
-    const last = parts[parts.length - 1] || '';
-    const effort = parts.length > 1 && EFFORTS.includes(last.toLowerCase()) ? last : '';
+    // First effort segment after the model, as presence.rs render_template does.
+    const effort = parts.slice(1).find((part) => EFFORTS.includes(part.toLowerCase())) || '';
     const model = parts[0] && parts[0] !== 'Auto-detect' ? parts[0].replace(/^Claude\s+/, '') : '';
     return { model, effort };
   }

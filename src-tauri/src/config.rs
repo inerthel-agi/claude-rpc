@@ -135,8 +135,13 @@ fn default_buttons() -> Vec<RpcButton> {
     ]
 }
 
-pub(crate) fn read_config(path: &Path) -> ClaudeConfig {
-    load_config(path).unwrap_or_default()
+// Fail closed: an unreadable config.json publishes nothing (DND) rather than
+// fall back to defaults that would drop private projects and DND.
+pub(crate) fn load_or_paused(path: &Path) -> ClaudeConfig {
+    load_config(path).unwrap_or_else(|_| ClaudeConfig {
+        dnd: true,
+        ..ClaudeConfig::default()
+    })
 }
 
 // Strict load: a missing file is the default config, but an unreadable or
@@ -231,7 +236,10 @@ fn clean_label(value: &str) -> Option<String> {
 
 fn clean_url(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.starts_with("http://") || value.starts_with("https://") {
+    // Discord silently rejects the whole activity over 512 characters.
+    if (value.starts_with("http://") || value.starts_with("https://"))
+        && value.chars().count() <= 512
+    {
         Some(value.to_string())
     } else {
         None
@@ -279,11 +287,19 @@ mod tests {
     }
 
     #[test]
+    fn drops_button_urls_longer_than_discord_accepts() {
+        let url = |len: usize| format!("https://a.test/{}", "x".repeat(len - 15));
+        assert_eq!(clean_url(&url(512)).map(|url| url.len()), Some(512));
+        assert_eq!(clean_url(&url(513)), None);
+    }
+
+    #[test]
     fn loads_and_writes_config_files() {
         let path = temp_config_path("roundtrip");
         let _ = fs::remove_file(&path);
         // Missing file: defaults.
         assert!(load_config(&path).unwrap().show_limits);
+        assert!(!load_or_paused(&path).dnd);
 
         let config = ClaudeConfig {
             dnd: true,
@@ -294,10 +310,10 @@ mod tests {
         assert!(!path.with_extension("json.tmp").exists());
 
         // A truncated file is an error for load_config (the daemon keeps its
-        // last good copy) but still defaults for read_config.
+        // last good copy) and pauses everything for load_or_paused.
         fs::write(&path, "{\"dnd\": tr").unwrap();
         assert!(load_config(&path).is_err());
-        assert!(!read_config(&path).dnd);
+        assert!(load_or_paused(&path).dnd);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }

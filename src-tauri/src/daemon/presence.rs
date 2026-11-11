@@ -91,7 +91,8 @@ pub(super) fn build_state(result: &DetectionResult, config: &ClaudeConfig) -> St
         // The plan ("Claude Max") replaces the generic "Subscription".
         match result.plan.as_ref().filter(|_| config.show_plan) {
             Some(plan) => parts.push(plan.clone()),
-            None => parts.push(result.provider.clone()),
+            None if result.provider != "Unknown" => parts.push(result.provider.clone()),
+            None => {}
         }
     }
     if config.show_sessions && result.code_instances > 1 {
@@ -151,17 +152,19 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
         ClientType::Code => "Claude Code",
         ClientType::Idle => "Claude",
     };
+    let provider = if result.provider == "Unknown" {
+        String::new()
+    } else {
+        result.provider.clone()
+    };
     let vars = [
         ("{model}", model.to_string()),
         ("{effort}", effort.to_string()),
         (
             "{plan}",
-            result
-                .plan
-                .clone()
-                .unwrap_or_else(|| result.provider.clone()),
+            result.plan.clone().unwrap_or_else(|| provider.clone()),
         ),
-        ("{provider}", result.provider.clone()),
+        ("{provider}", provider),
         (
             "{limits}",
             result
@@ -183,7 +186,10 @@ pub(super) fn render_template(template: &str, result: &DetectionResult) -> Optio
         ("{sessions}", result.code_instances.max(1).to_string()),
         (
             "{project}",
-            project_name(result.project_dir.as_deref()).unwrap_or_default(),
+            // Outside coding the folder is not what the user works on, and the
+            // private filter only vets it while coding.
+            project_name(result.project_dir.as_deref().filter(|_| is_coding(result)))
+                .unwrap_or_default(),
         ),
         ("{client}", client.to_string()),
         ("{mode}", result.mode.clone().unwrap_or_default()),
@@ -245,32 +251,36 @@ pub(super) fn hidden_reason(
     result: &DetectionResult,
     config: &ClaudeConfig,
 ) -> Option<&'static str> {
+    // An unknown Desktop tab may be Chat: hide rather than guess.
     if config.hide_in_chat
         && result.client == ClientType::Desktop
-        && result.mode.as_deref() == Some("Chat")
+        && result.mode.as_deref().is_none_or(|mode| mode == "Chat")
     {
         return Some("chat");
     }
-    let coding = result.client == ClientType::Code
-        || result.mode.as_deref() == Some("Code")
-        || result.cli_alongside;
-    if coding
-        && !config.private_projects.is_empty()
+    if !config.private_projects.is_empty()
+        // Several sessions run at once, and Desktop Code sessions keep running
+        // on the Chat tab: any recently active private session hides everything.
         && (result
-            .project_dir
-            .as_deref()
-            // Do not publish until an enabled privacy filter can be evaluated.
-            .is_none_or(|dir| is_private_project(dir, &config.private_projects))
-            // Several sessions run at once: the latest log may not be the one
-            // in use, so any recently active private session hides everything.
-            || result
-                .recent_project_dirs
-                .iter()
-                .any(|dir| is_private_project(dir, &config.private_projects)))
+            .recent_project_dirs
+            .iter()
+            .any(|dir| is_private_project(dir, &config.private_projects))
+            || is_coding(result)
+                && result
+                    .project_dir
+                    .as_deref()
+                    // Do not publish until an enabled privacy filter can be evaluated.
+                    .is_none_or(|dir| is_private_project(dir, &config.private_projects)))
     {
         return Some("private");
     }
     None
+}
+
+fn is_coding(result: &DetectionResult) -> bool {
+    result.client == ClientType::Code
+        || result.mode.as_deref() == Some("Code")
+        || result.cli_alongside
 }
 
 // An entry without a slash matches the project folder name; one with a slash
@@ -396,7 +406,6 @@ pub(super) fn presence_key(result: &DetectionResult, config: &ClaudeConfig) -> S
         "showBranch": config.show_branch,
         "sessionTitle": result.session_title,
         "branch": result.git_branch,
-        "recentProjects": result.recent_project_dirs,
         "detailsTemplate": config.details_template,
         "stateTemplate": config.state_template,
         "hidden": hidden_reason(result, config),
@@ -482,6 +491,50 @@ mod tests {
         result.mode = Some("Chat".into());
         result.cli_alongside = true;
         assert_eq!(hidden_reason(&result, &config), Some("private"));
+    }
+
+    #[test]
+    fn private_recent_session_hides_outside_the_code_tab() {
+        let config = ClaudeConfig {
+            private_projects: vec!["secret".into()],
+            ..ClaudeConfig::default()
+        };
+        for mode in [Some("Chat".to_string()), None] {
+            let result = DetectionResult {
+                client: ClientType::Desktop,
+                mode,
+                recent_project_dirs: vec![r"D:\work\secret".into()],
+                ..DetectionResult::default()
+            };
+            assert_eq!(hidden_reason(&result, &config), Some("private"));
+        }
+        // Without a recent private session the Chat tab publishes, but never
+        // the folder name of a project it is not working in.
+        let chat = DetectionResult {
+            client: ClientType::Desktop,
+            mode: Some("Chat".into()),
+            project_dir: Some(r"D:\work\secret".into()),
+            ..DetectionResult::default()
+        };
+        assert_eq!(hidden_reason(&chat, &config), None);
+        assert!(!render_template("{project} x", &chat)
+            .unwrap_or_default()
+            .contains("secret"));
+    }
+
+    #[test]
+    fn hide_in_chat_covers_an_unknown_desktop_tab() {
+        let config = ClaudeConfig {
+            hide_in_chat: true,
+            ..ClaudeConfig::default()
+        };
+        let mut result = DetectionResult {
+            client: ClientType::Desktop,
+            ..DetectionResult::default()
+        };
+        assert_eq!(hidden_reason(&result, &config), Some("chat"));
+        result.mode = Some("Code".into());
+        assert_ne!(hidden_reason(&result, &config), Some("chat"));
     }
 
     #[test]
@@ -659,6 +712,32 @@ mod tests {
     }
 
     #[test]
+    fn presence_key_ignores_recent_session_order() {
+        let config = ClaudeConfig {
+            private_projects: vec!["secret".into()],
+            ..ClaudeConfig::default()
+        };
+        let a = DetectionResult {
+            client: ClientType::Code,
+            project_dir: Some(r"D:\work\a".into()),
+            recent_project_dirs: vec![r"D:\work\a".into(), r"D:\work\b".into()],
+            ..DetectionResult::default()
+        };
+        let b = DetectionResult {
+            recent_project_dirs: vec![
+                r"D:\work\b".into(),
+                r"D:\work\a".into(),
+                r"D:\work\b".into(),
+            ],
+            ..a.clone()
+        };
+        assert_eq!(presence_key(&a, &config), presence_key(&b, &config));
+        let mut private = a.clone();
+        private.recent_project_dirs.push(r"D:\work\secret".into());
+        assert_ne!(presence_key(&a, &config), presence_key(&private, &config));
+    }
+
+    #[test]
     fn hides_presence_without_a_client() {
         let mut config = ClaudeConfig::default();
         let mut result = DetectionResult::default();
@@ -706,6 +785,31 @@ mod tests {
         assert_eq!(
             build_state(&result, &config),
             "Claude Opus 4.7 (1M) | Limits: 5h 3%"
+        );
+    }
+
+    #[test]
+    fn never_publishes_an_unknown_provider() {
+        let mut result = DetectionResult {
+            client: ClientType::Code,
+            model: Some("Claude Opus 5.5".into()),
+            ..DetectionResult::default()
+        };
+        assert_eq!(result.provider, "Unknown");
+        let config = ClaudeConfig::default();
+        assert_eq!(build_state(&result, &config), "Claude Opus 5.5");
+        assert_eq!(
+            render_template("{model} [{provider}] [{plan}]", &result).as_deref(),
+            Some("Claude Opus 5.5 [] []")
+        );
+        result.plan = Some("Claude Max".into());
+        assert_eq!(
+            build_state(&result, &config),
+            "Claude Opus 5.5 | Claude Max"
+        );
+        assert_eq!(
+            render_template("[{provider}] [{plan}]", &result).as_deref(),
+            Some("[] [Claude Max]")
         );
     }
 }

@@ -362,6 +362,10 @@ small[hidden],
   display: none;
 }
 
+.limits .unknown .limit-head b {
+  color: var(--muted);
+}
+
 .limit-head {
   display: flex;
   align-items: baseline;

@@ -66,6 +66,10 @@ struct TrayInfo {
 const STARTUP_REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
 const STARTUP_REG_VALUE: &str = "Claude RPC";
+// Where Task Manager and Settings > Apps > Startup record a disabled Run entry.
+#[cfg(windows)]
+const STARTUP_APPROVED_KEY: &str =
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,7 +101,9 @@ struct ClaudeStatus {
 
 #[tauri::command]
 fn load_config() -> Result<ClaudeConfig, String> {
-    read_config()
+    // Strict: the settings window must not fill (and then save) defaults over
+    // an unreadable config.json.
+    config::load_config(&config_path()?)
 }
 
 #[tauri::command]
@@ -271,7 +277,7 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn read_tray_info(app: &tauri::AppHandle) -> TrayInfo {
-    let config = read_config().unwrap_or_default();
+    let config = read_config();
     let update_version = app
         .state::<UpdateState>()
         .available
@@ -302,9 +308,26 @@ fn read_tray_info(app: &tauri::AppHandle) -> TrayInfo {
 #[tauri::command]
 async fn diagnostic(app: tauri::AppHandle) -> Result<String, String> {
     let version = app.package_info().version.to_string();
-    let report = tauri::async_runtime::spawn_blocking(daemon::diagnostic_report)
-        .await
-        .map_err(|err| err.to_string())?;
+    let report = tauri::async_runtime::spawn_blocking(|| {
+        let report = daemon::diagnostic_report();
+        #[cfg(windows)]
+        let report = {
+            let yes_no = |value: bool| if value { "yes" } else { "no" };
+            let approval = match startup_approval() {
+                Some(true) => "enabled",
+                Some(false) => "disabled",
+                None => "not set",
+            };
+            format!(
+                "{report}\nStart with Windows: Run value present: {}, points to this executable: {}, Windows approval: {approval}",
+                yes_no(startup_value_exists()),
+                yes_no(run_value_points_here())
+            )
+        };
+        report
+    })
+    .await
+    .map_err(|err| err.to_string())?;
     Ok(format!("Claude RPC v{version}\n{report}"))
 }
 
@@ -500,7 +523,7 @@ fn spawn_status_watcher(app: tauri::AppHandle) {
             else {
                 continue;
             };
-            let config = read_config().unwrap_or_default();
+            let config = read_config();
             let french = alerts::is_french(&config.language);
 
             let tooltip = alerts::tray_tooltip(&status, french);
@@ -691,8 +714,36 @@ fn show_settings(app: &tauri::AppHandle) {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+// `reg query` output for the StartupApproved value: Windows marks a disabled
+// entry with an odd first byte (03 00 00 00 ...); even means enabled.
+#[cfg(windows)]
+fn parse_startup_approved(reg_output: &str) -> Option<bool> {
+    let (_, data) = reg_output
+        .lines()
+        .find_map(|line| line.split_once("REG_BINARY"))?;
+    let byte = u8::from_str_radix(data.trim().get(..2)?, 16).ok()?;
+    Some(byte % 2 == 0)
+}
+
+// None when Windows has no StartupApproved value for us (never toggled).
+#[cfg(windows)]
+fn startup_approval() -> Option<bool> {
+    use std::os::windows::process::CommandExt;
+    let output = std::process::Command::new("reg.exe")
+        .args(["query", STARTUP_APPROVED_KEY, "/v", STARTUP_REG_VALUE])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    parse_startup_approved(&String::from_utf8_lossy(&output.stdout))
+}
+
 #[cfg(windows)]
 fn is_start_on_windows_enabled() -> bool {
+    run_value_points_here() && startup_approval() != Some(false)
+}
+
+#[cfg(windows)]
+fn run_value_points_here() -> bool {
     use std::os::windows::process::CommandExt;
     // A value left by a moved or reinstalled copy does not count: turning the
     // option on again rewrites it with this executable's path.
@@ -726,15 +777,16 @@ fn startup_value_exists() -> bool {
 
 // The installed copy (beside its uninstaller) takes over a "Start with Windows"
 // entry left pointing at another copy, such as an old portable build: else
-// every login starts that older version, with the bugs it still has.
+// every login starts that older version, with the bugs it still has. An entry
+// the user disabled in Task Manager stays disabled (StartupApproved untouched).
 #[cfg(windows)]
 fn repair_start_on_windows() {
     let installed = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("uninstall.exe").is_file()))
         .unwrap_or(false);
-    if installed && startup_value_exists() && !is_start_on_windows_enabled() {
-        let _ = set_start_on_windows(true);
+    if installed && startup_value_exists() && !run_value_points_here() {
+        let _ = write_run_value();
     }
 }
 
@@ -746,24 +798,40 @@ fn is_start_on_windows_enabled() -> bool {
 #[cfg(windows)]
 fn set_start_on_windows(enabled: bool) -> Result<(), String> {
     if enabled {
-        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let command = format!("\"{}\"", exe.to_string_lossy());
-        run_reg(&[
-            "add",
-            STARTUP_REG_KEY,
-            "/v",
-            STARTUP_REG_VALUE,
-            "/t",
-            "REG_SZ",
-            "/d",
-            command.as_str(),
-            "/f",
-        ])
+        write_run_value()?;
+        // Turning it on is explicit: lift a "disabled" set in Task Manager.
+        if startup_approval().is_some() {
+            run_reg(&[
+                "delete",
+                STARTUP_APPROVED_KEY,
+                "/v",
+                STARTUP_REG_VALUE,
+                "/f",
+            ])?;
+        }
+        Ok(())
     } else if startup_value_exists() {
         run_reg(&["delete", STARTUP_REG_KEY, "/v", STARTUP_REG_VALUE, "/f"])
     } else {
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn write_run_value() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+    let command = format!("\"{}\"", exe.to_string_lossy());
+    run_reg(&[
+        "add",
+        STARTUP_REG_KEY,
+        "/v",
+        STARTUP_REG_VALUE,
+        "/t",
+        "REG_SZ",
+        "/d",
+        command.as_str(),
+        "/f",
+    ])
 }
 
 #[cfg(not(windows))]
@@ -864,10 +932,12 @@ where
     Ok(config)
 }
 
-fn read_config() -> Result<ClaudeConfig, String> {
-    // An unparsable file still opens the settings with defaults so it can be
-    // repaired from the UI; the daemon keeps its last good copy meanwhile.
-    Ok(config::load_config(&config_path()?).unwrap_or_default())
+// Tray and status watcher: an unreadable file reads as paused (DND on), the
+// same state the daemon falls back to.
+fn read_config() -> ClaudeConfig {
+    config_path()
+        .map(|path| config::load_or_paused(&path))
+        .unwrap_or_default()
 }
 
 fn write_config(config: &ClaudeConfig) -> Result<(), String> {
@@ -884,4 +954,37 @@ fn status_path() -> Result<PathBuf, String> {
 
 fn app_dir() -> Result<PathBuf, String> {
     Ok(daemon::app_dir())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_startup_approved_state() {
+        let query = |data: &str| {
+            format!(
+                "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\r\n    Claude RPC    REG_BINARY    {data}\r\n\r\n"
+            )
+        };
+        assert_eq!(
+            parse_startup_approved(&query("030000F15D04ECD860DD01")),
+            Some(false)
+        );
+        assert_eq!(
+            parse_startup_approved(&query("020000000000000000000000")),
+            Some(true)
+        );
+        assert_eq!(
+            parse_startup_approved(&query("060000000000000000000000")),
+            Some(true)
+        );
+        assert_eq!(parse_startup_approved(""), None);
+        assert_eq!(
+            parse_startup_approved(
+                "ERROR: The system was unable to find the specified registry key or value."
+            ),
+            None
+        );
+    }
 }

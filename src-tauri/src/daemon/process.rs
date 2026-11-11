@@ -15,27 +15,67 @@ pub(super) struct ProcessSnapshot {
     pub(super) creation_date_ms: Option<u64>,
 }
 
+// Snapshots from the previous scan, by pid.
+pub(super) type ProcessCache = HashMap<u32, ProcessSnapshot>;
+
 #[cfg(windows)]
-pub(super) fn scan_claude_processes() -> Vec<ProcessSnapshot> {
-    list_process_entries()
+pub(super) fn scan_claude_processes(cache: &mut ProcessCache) -> Vec<ProcessSnapshot> {
+    let snapshots: Vec<ProcessSnapshot> = list_process_entries()
         .into_iter()
         .filter(|entry| {
             entry.name.eq_ignore_ascii_case("claude.exe")
                 || entry.name.eq_ignore_ascii_case("claude desktop.exe")
         })
-        .map(|entry| ProcessSnapshot {
-            process_id: entry.process_id,
-            name: entry.name,
-            executable_path: query_process_path(entry.process_id),
-            command_line: query_process_command_line(entry.process_id),
-            creation_date_ms: query_process_creation_ms(entry.process_id),
+        .map(|entry| {
+            let creation_date_ms = query_process_creation_ms(entry.process_id);
+            cached_snapshot(cache, entry.process_id, creation_date_ms).unwrap_or_else(|| {
+                ProcessSnapshot {
+                    process_id: entry.process_id,
+                    name: entry.name,
+                    executable_path: query_process_path(entry.process_id),
+                    command_line: query_process_command_line(entry.process_id),
+                    creation_date_ms,
+                }
+            })
         })
-        .collect()
+        .collect();
+    refresh_process_cache(cache, &snapshots);
+    snapshots
 }
 
 #[cfg(not(windows))]
-pub(super) fn scan_claude_processes() -> Vec<ProcessSnapshot> {
+pub(super) fn scan_claude_processes(_cache: &mut ProcessCache) -> Vec<ProcessSnapshot> {
     Vec::new()
+}
+
+// Image path and command line never change for a live process; the creation
+// time tells a reused pid apart.
+#[cfg(any(windows, test))]
+fn cached_snapshot(
+    cache: &ProcessCache,
+    process_id: u32,
+    creation_date_ms: Option<u64>,
+) -> Option<ProcessSnapshot> {
+    let created = creation_date_ms?;
+    cache
+        .get(&process_id)
+        .filter(|cached| cached.creation_date_ms == Some(created))
+        .cloned()
+}
+
+// Keeps only the pids seen this scan. A snapshot missing its creation time,
+// path or command line is queried again next scan, as before the cache.
+#[cfg(any(windows, test))]
+fn refresh_process_cache(cache: &mut ProcessCache, snapshots: &[ProcessSnapshot]) {
+    *cache = snapshots
+        .iter()
+        .filter(|snapshot| {
+            snapshot.creation_date_ms.is_some()
+                && snapshot.executable_path.is_some()
+                && snapshot.command_line.is_some()
+        })
+        .map(|snapshot| (snapshot.process_id, snapshot.clone()))
+        .collect();
 }
 
 pub(super) fn is_desktop_process(process: &ProcessSnapshot) -> bool {
@@ -398,5 +438,47 @@ mod tests {
         }
         process.command_line = None;
         assert!(is_code_process(&process));
+    }
+
+    #[test]
+    fn reuses_process_snapshots_only_for_the_same_process() {
+        let snapshot = |pid: u32, created: Option<u64>, command: Option<&str>| ProcessSnapshot {
+            process_id: pid,
+            name: "claude.exe".into(),
+            executable_path: Some(r"C:\claude.exe".into()),
+            command_line: command.map(str::to_string),
+            creation_date_ms: created,
+        };
+        let mut cache = ProcessCache::new();
+        refresh_process_cache(
+            &mut cache,
+            &[
+                snapshot(1, Some(100), Some("claude.exe --resume")),
+                snapshot(2, None, Some("claude.exe")),
+                snapshot(3, Some(300), None),
+                snapshot(4, Some(400), Some("claude.exe")),
+            ],
+        );
+        // Incomplete snapshots are not kept.
+        assert_eq!(cache.len(), 2);
+
+        let reused = cached_snapshot(&cache, 1, Some(100)).unwrap();
+        assert_eq!(reused.command_line.as_deref(), Some("claude.exe --resume"));
+        // Same pid, other creation time: a new process.
+        assert!(cached_snapshot(&cache, 1, Some(101)).is_none());
+        assert!(cached_snapshot(&cache, 1, None).is_none());
+        assert!(cached_snapshot(&cache, 5, Some(100)).is_none());
+
+        // Pids gone from the scan are evicted; a refreshed one replaces the old.
+        refresh_process_cache(&mut cache, &[snapshot(1, Some(101), Some("claude.exe"))]);
+        assert_eq!(cache.len(), 1);
+        assert!(cached_snapshot(&cache, 4, Some(400)).is_none());
+        assert_eq!(
+            cached_snapshot(&cache, 1, Some(101))
+                .unwrap()
+                .command_line
+                .as_deref(),
+            Some("claude.exe")
+        );
     }
 }
