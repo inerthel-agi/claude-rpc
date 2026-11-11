@@ -181,6 +181,8 @@ pub(super) fn effort_from_lines(lines: &[String]) -> Option<String> {
 pub(super) fn session_effort(lines: &[String]) -> (Option<String>, bool) {
     let mut command: Option<(usize, String)> = None;
     let mut turn: Option<(usize, String)> = None;
+    // A turn after the command at a level other than xhigh ends an Ultracode override.
+    let mut other_turn_after_command = false;
     for (index, line) in lines.iter().enumerate().rev() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -191,8 +193,9 @@ pub(super) fn session_effort(lines: &[String]) -> (Option<String>, bool) {
         if command.is_none() {
             command = read_command_effort(&entry).map(|effort| (index, effort));
         }
-        if turn.is_none() {
-            turn = read_turn_effort(&entry).map(|effort| (index, effort));
+        if let Some(effort) = read_turn_effort(&entry) {
+            other_turn_after_command |= command.is_none() && effort != "Extra high";
+            turn.get_or_insert((index, effort));
         }
         if command.is_some() && turn.is_some() {
             break;
@@ -206,7 +209,13 @@ pub(super) fn session_effort(lines: &[String]) -> (Option<String>, bool) {
         Some((command_index, effort)) if command_index > turn_index => effort,
         // shortcut: a level picked in the Desktop UI is not logged, so Ultracode stays
         // until a turn at another level is logged, upgrade if the UI writes a log line.
-        Some((_, effort)) if effort == "Ultracode" && turn_effort == "Extra high" => effort,
+        Some((_, effort))
+            if effort == "Ultracode"
+                && turn_effort == "Extra high"
+                && !other_turn_after_command =>
+        {
+            effort
+        }
         _ => turn_effort,
     };
     (Some(effort), command_seen)
@@ -865,6 +874,12 @@ mod tests {
             effort_from_lines(&[effort_command("ultracode"), turn("xhigh"), turn("high")])
                 .as_deref(),
             Some("High")
+        );
+        // Even when xhigh turns follow it: the High turn already ended Ultracode.
+        assert_eq!(
+            effort_from_lines(&[effort_command("ultracode"), turn("high"), turn("xhigh")])
+                .as_deref(),
+            Some("Extra high")
         );
     }
 
