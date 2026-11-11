@@ -120,8 +120,14 @@ pub(super) fn resolve_session_effort(
         machine.cached_code_effort_session = session_file;
     }
     if let Some(effort) = read_session_effort_override(session) {
-        machine.cached_code_effort = Some(effort.clone());
-        return Some(effort);
+        // Ultracode runs at xhigh: once its `/effort` line leaves the read tail,
+        // the turns alone say Extra high, which is not a change.
+        let ultracode_continues = machine.cached_code_effort.as_deref() == Some("Ultracode")
+            && effort == "Extra high"
+            && !session.is_some_and(|session| session.effort_command_seen);
+        if !ultracode_continues {
+            machine.cached_code_effort = Some(effort);
+        }
     }
     machine.cached_code_effort.clone()
 }
@@ -166,7 +172,13 @@ pub(super) fn read_session_effort_override(session: Option<&SessionInfo>) -> Opt
 // output (O) against the latest turn's effort (P, Claude Code's "perTurnEffort").
 // The newer one wins. "Ultracode" runs at xhigh, so an Ultracode override followed
 // by an Extra high turn stays Ultracode. A later turn at another level ends it.
+#[cfg(test)]
 pub(super) fn effort_from_lines(lines: &[String]) -> Option<String> {
+    session_effort(lines).0
+}
+
+// `effort_from_lines`, plus whether the tail holds an `/effort` command.
+pub(super) fn session_effort(lines: &[String]) -> (Option<String>, bool) {
     let mut command: Option<(usize, String)> = None;
     let mut turn: Option<(usize, String)> = None;
     for (index, line) in lines.iter().enumerate().rev() {
@@ -186,16 +198,18 @@ pub(super) fn effort_from_lines(lines: &[String]) -> Option<String> {
             break;
         }
     }
+    let command_seen = command.is_some();
     let Some((turn_index, turn_effort)) = turn else {
-        return command.map(|(_, effort)| effort);
+        return (command.map(|(_, effort)| effort), command_seen);
     };
-    match command {
-        Some((command_index, effort)) if command_index > turn_index => Some(effort),
+    let effort = match command {
+        Some((command_index, effort)) if command_index > turn_index => effort,
         // shortcut: a level picked in the Desktop UI is not logged, so Ultracode stays
         // until a turn at another level is logged, upgrade if the UI writes a log line.
-        Some((_, effort)) if effort == "Ultracode" && turn_effort == "Extra high" => Some(effort),
-        _ => Some(turn_effort),
-    }
+        Some((_, effort)) if effort == "Ultracode" && turn_effort == "Extra high" => effort,
+        _ => turn_effort,
+    };
+    (Some(effort), command_seen)
 }
 
 // Effort of a main-thread assistant turn: top-level "perTurnEffort", else the
@@ -852,5 +866,31 @@ mod tests {
                 .as_deref(),
             Some("High")
         );
+    }
+
+    #[test]
+    fn ultracode_survives_its_command_leaving_the_tail() {
+        let session = |effort: &str, effort_command_seen| SessionInfo {
+            file: std::path::PathBuf::from("session.jsonl"),
+            started_at_ms: None,
+            model: None,
+            cwd: None,
+            title: None,
+            branch: None,
+            effort: Some(effort.into()),
+            effort_command_seen,
+            recent_cwds: Vec::new(),
+        };
+        let mut machine = StateMachine::default();
+        let mut resolve =
+            |effort, seen| resolve_session_effort(&mut machine, Some(&session(effort, seen)));
+        assert_eq!(resolve("Ultracode", true).as_deref(), Some("Ultracode"));
+        // `/effort ultracode` scrolled out: only the xhigh turns are left.
+        assert_eq!(resolve("Extra high", false).as_deref(), Some("Ultracode"));
+        // An explicit `/effort xhigh` in the tail is a real change.
+        assert_eq!(resolve("Extra high", true).as_deref(), Some("Extra high"));
+        resolve("Ultracode", true);
+        // A turn at another level ends it.
+        assert_eq!(resolve("High", false).as_deref(), Some("High"));
     }
 }

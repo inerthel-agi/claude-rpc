@@ -601,6 +601,7 @@ mod tests {
             title: None,
             branch: None,
             effort: None,
+            effort_command_seen: false,
             recent_cwds: Vec::new(),
         };
         // A loose UI match in the Code tab loses to the session log.

@@ -159,8 +159,10 @@ struct SessionInfo {
     cwd: Option<String>,
     title: Option<String>,
     branch: Option<String>,
-    // Latest `/effort` override in the log tail.
+    // Session effort from the log tail (model::session_effort), and whether that
+    // tail still holds an `/effort` command.
     effort: Option<String>,
+    effort_command_seen: bool,
     // Working directories of every session written in the last 10 minutes.
     recent_cwds: Vec<String>,
 }

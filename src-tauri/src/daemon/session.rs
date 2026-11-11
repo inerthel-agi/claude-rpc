@@ -42,7 +42,7 @@ pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo
     let lines = read_tail_lines(&file, 256 * 1024).unwrap_or_default();
     let model = model_from_lines(&lines);
     let (title, branch) = meta_from_lines(&lines);
-    let effort = effort_from_lines(&lines);
+    let (effort, effort_command_seen) = session_effort(&lines);
     let cwd = read_session_cwd(&file);
     Some(SessionInfo {
         file,
@@ -52,6 +52,7 @@ pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo
         title,
         branch,
         effort,
+        effort_command_seen,
         recent_cwds,
     })
 }
