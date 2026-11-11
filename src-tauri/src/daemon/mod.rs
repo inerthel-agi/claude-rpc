@@ -200,6 +200,8 @@ pub(crate) struct StateMachine {
     // token; no fetch starts while the file still has it.
     oauth_refused_mtime: Option<Option<u64>>,
     oauth_sign_in_checked_ms: u64,
+    // Credentials mtime when the in-flight request started.
+    oauth_attempt_mtime: Option<u64>,
     last_session_mtime: u64,
     pending_activity_refresh: bool,
     cached_code_model: Option<String>,

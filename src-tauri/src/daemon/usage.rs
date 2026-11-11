@@ -397,8 +397,10 @@ pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> 
             machine.oauth_refused_mtime = None;
             if let Err(error) = &result {
                 machine.oauth_backoff_until_ms = now + backoff_after(error);
+                // Block on the credentials the request used: a /login during
+                // the request leaves a newer file, which must not count as refused.
                 if is_refused_renewal(error) {
-                    machine.oauth_refused_mtime = Some(credentials_modified_ms());
+                    machine.oauth_refused_mtime = Some(machine.oauth_attempt_mtime);
                 }
             }
             record_oauth_outcome(
@@ -433,6 +435,7 @@ pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> 
     machine.oauth_last_attempt_ms = now;
     machine.pending_activity_refresh = false;
     let (sender, receiver) = mpsc::channel();
+    machine.oauth_attempt_mtime = credentials_modified_ms();
     std::thread::spawn(move || {
         let _ = sender.send(fetch_oauth_usage());
     });
@@ -1153,6 +1156,26 @@ mod tests {
             OAuthErrorCode::Other
         );
         assert_eq!(oauth_error_code(None), OAuthErrorCode::Absent);
+    }
+
+    #[test]
+    fn blocks_the_credentials_the_refused_request_used() {
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(Err(OAuthFetchError::NoToken(
+                TokenError::Expired,
+                RenewError::Status(400, OAuthErrorCode::InvalidGrant),
+            )))
+            .unwrap();
+        // The file was rewritten (mtime 6) while the request with mtime 5 ran.
+        let mut machine = StateMachine {
+            oauth_inflight: Some(receiver),
+            oauth_attempt_mtime: Some(5),
+            ..StateMachine::default()
+        };
+        assert!(maybe_fetch_oauth_limits(&mut machine, 1_000).is_none());
+        assert_eq!(machine.oauth_refused_mtime, Some(Some(5)));
+        assert!(!sign_in_still_refused(&mut machine, 10_000, || Some(6)));
     }
 
     #[test]

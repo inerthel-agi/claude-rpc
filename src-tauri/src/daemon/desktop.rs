@@ -8,8 +8,8 @@ pub(super) struct DesktopScanDebug {
     duration_ms: u128,
     // Top model candidates by score, best first.
     candidates: Vec<ScanCandidate>,
-    // "Usage: ..." labels (context size and usage percentages only), so the
-    // report shows the wording the limits parser has to match.
+    // Wording of the "Usage: ..." buttons, so the report shows what the limits
+    // parser has to match; see usage_label_shape.
     usage_labels: Vec<String>,
 }
 
@@ -89,6 +89,34 @@ fn is_pure_model_label(label: &str) -> bool {
         .split(|ch: char| ch.is_whitespace() || ch.is_ascii_punctuation())
         .filter(|token| !token.is_empty())
         .all(|token| token.chars().all(|ch| ch.is_ascii_digit()) || WORDS.contains(&token))
+}
+
+// A usage label with every word outside the usage-button vocabulary replaced
+// by "?": a chat line that starts with "Usage:" can never reach the report.
+#[cfg(any(windows, test))]
+fn usage_label_shape(label: &str) -> String {
+    const WORDS: &[&str] = &[
+        "usage", "context", "of", "5-hour", "hour", "limit", "weekly", "all", "models", "fable",
+        "opus", "sonnet", "haiku", "current", "session", "resets", "in", "at", "hr", "hrs", "min",
+        "mins", "day", "days", "am", "pm", "mon", "tue", "wed", "thu", "fri", "sat", "sun", "·",
+        "/",
+    ];
+    let known = |token: &str| {
+        let core = token
+            .trim_matches(|ch: char| matches!(ch, '(' | ')' | ',' | ':'))
+            .to_lowercase();
+        core.is_empty()
+            || WORDS.contains(&core.as_str())
+            || (core.chars().any(|ch| ch.is_ascii_digit())
+                && core
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ':' | '%' | 'k' | 'm')))
+    };
+    label
+        .split_whitespace()
+        .map(|token| if known(token) { token } else { "?" })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(any(windows, test))]
@@ -288,8 +316,10 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
 
         let norm = normalize_ui_label(name);
         if let Some(debug) = debug.as_mut() {
-            if norm.starts_with("usage:") && debug.usage_labels.len() < 3 {
-                debug.usage_labels.push(truncate(name.to_string(), 200));
+            if is_button && norm.starts_with("usage:") && debug.usage_labels.len() < 3 {
+                debug
+                    .usage_labels
+                    .push(truncate(usage_label_shape(name), 200));
             }
         }
         // The Code tab composer exposes its pickers as "Model: Opus 5.5" and
@@ -634,6 +664,21 @@ mod tests {
         assert_eq!(model_candidate_score(false, false, true, false), 1);
         assert_eq!(model_candidate_score(false, true, false, false), 4 + 3);
         assert_eq!(model_candidate_score(false, false, false, true), 3 + 2);
+    }
+
+    #[test]
+    fn keeps_only_usage_button_wording() {
+        for label in [
+            "Usage: Context 146.8k / 1M (15%), 6% of 5-hour limit, Resets in 4 hr 33 min",
+            "Usage: Weekly · all models: 44%, Resets Sun 3:00 AM",
+            "Usage: 52% of 5-hour limit, Resets at 10:10 PM",
+        ] {
+            assert_eq!(usage_label_shape(label), label);
+        }
+        assert_eq!(
+            usage_label_shape("Usage: my password is hunter2, 10% done"),
+            "Usage: ? ? ? ? 10% ?"
+        );
     }
 
     #[test]
