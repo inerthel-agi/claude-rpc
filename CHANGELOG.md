@@ -1,5 +1,26 @@
 # Changelog
 
+## v4.0.5 (2026-11-11)
+
+### Fixed
+- **Start with Windows** showed as on when Windows had disabled the startup entry (Task Manager > Startup apps), so Claude RPC did not start at sign-in. The setting now shows the real state, and turning it on enables the entry again.
+- **Private projects**: the activity was still published while Claude Desktop was on the Chat or Cowork tab, or while the tab could not be detected, with a Claude Code session running in a private folder. `{project}` is now empty outside a coding session.
+- **Hide in Chat tab** also hides the activity when the Claude Desktop tab cannot be detected.
+- An unreadable `config.json` no longer publishes with the default settings. Nothing is published until the file is fixed, and the settings window shows an error instead of overwriting it.
+- With several sessions writing at once, the same activity was sent to Discord again each time their order changed.
+- The provider "Unknown" is no longer shown on Discord.
+- A profile button URL longer than 512 characters is now dropped. Discord rejected the whole activity.
+- When the Claude Code sign-in token had expired and its renewal was refused, the same renewal was sent again every 10 minutes. It now waits for a new Claude Code sign-in (`/login`), picked up within 5 seconds, or until you press Refresh.
+- **Effort** was missing for Claude Desktop Code sessions whenever the Desktop window did not show it. It is now read from the session log, which records the level of each turn, so it also follows a change made during the session. Claude Code alone uses the same source before its default setting.
+- The tray menu lost the effort when the model line ended with "Adaptive" or "Extended".
+- Reset times read from Claude Desktop keep their capitalization ("Sun 4:00 AM" instead of "sun 4:00 am").
+
+### Changed
+- The Usage page and the tray menu always show the **Fable weekly** limit. When Claude has not reported it, the row says so and how to get it back.
+- Lower CPU use while Claude runs: detection now runs once per second instead of four times, session logs are listed from the project folders only, and process details are read once per process. The Claude Desktop window is read at most 5% of the time (every 2 to 15 seconds, depending on how long a read takes). Measured with Claude Desktop and four Code sessions open: 1.6% of one core instead of 5.3% in the same conditions. `SCAN_INTERVAL_MS` now defaults to 1000.
+- A model named without a version shows the family alone, such as "Claude Opus", instead of a guessed version.
+- **Copy diagnostic** adds the last usage request result, the Discord connection state, a config error, the age and source of each usage limit, the Claude Desktop scan time with its model candidates, and the Start with Windows state.
+
 ## v4.0.4 (2026-11-05)
 
 ### Added

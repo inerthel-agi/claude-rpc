@@ -105,19 +105,57 @@ pub(super) fn resolve_code_effort(
     machine: &mut StateMachine,
     session: Option<&SessionInfo>,
 ) -> Option<String> {
+    resolve_session_effort(machine, session).or_else(read_settings_effort)
+}
+
+// The effort of the session in use (see `effort_from_lines`), cached per session.
+// Desktop Code sessions use it alone: the settings.json default does not apply to them.
+pub(super) fn resolve_session_effort(
+    machine: &mut StateMachine,
+    session: Option<&SessionInfo>,
+) -> Option<String> {
     let session_file = session.map(|session| session.file.clone());
     if machine.cached_code_effort_session != session_file {
         machine.cached_code_effort = None;
         machine.cached_code_effort_session = session_file;
     }
     if let Some(effort) = read_session_effort_override(session) {
-        machine.cached_code_effort = Some(effort.clone());
-        return Some(effort);
+        // Ultracode runs at xhigh: once its `/effort` line leaves the read tail,
+        // the turns alone say Extra high, which is not a change.
+        let ultracode_continues = machine.cached_code_effort.as_deref() == Some("Ultracode")
+            && effort == "Extra high"
+            && !session.is_some_and(|session| session.effort_command_seen);
+        if !ultracode_continues {
+            machine.cached_code_effort = Some(effort);
+        }
     }
-    machine
-        .cached_code_effort
-        .clone()
-        .or_else(read_settings_effort)
+    machine.cached_code_effort.clone()
+}
+
+// Desktop Code tab whose window shows no effort: the session effort is the only
+// source left. Chat and Cowork tabs never take it (their chat is not the log).
+// With a terminal CLI running, the latest session may be the CLI's, not the Desktop
+// tab's, so the session effort is not shown.
+pub(super) fn desktop_model_with_session_effort(
+    model: Option<String>,
+    window_effort: Option<&str>,
+    mode: Option<&str>,
+    session_effort: Option<String>,
+    cli_running: bool,
+) -> Option<String> {
+    let label_has_effort = model
+        .as_deref()
+        .and_then(|model| extract_effort_label(&model.to_ascii_lowercase()))
+        .is_some();
+    if mode != Some("Code")
+        || window_effort.is_some()
+        || label_has_effort
+        || cli_running
+        || session_effort.is_none()
+    {
+        return model;
+    }
+    append_code_effort(model, session_effort)
 }
 
 pub(super) fn read_settings_effort() -> Option<String> {
@@ -127,19 +165,78 @@ pub(super) fn read_settings_effort() -> Option<String> {
 }
 
 pub(super) fn read_session_effort_override(session: Option<&SessionInfo>) -> Option<String> {
-    let lines = read_tail_lines(&session?.file, 256 * 1024)?;
-    for line in lines.iter().rev() {
+    session?.effort.clone()
+}
+
+// Effort of the session in use, from the main-thread log tail: the latest `/effort`
+// output (O) against the latest turn's effort (P, Claude Code's "perTurnEffort").
+// The newer one wins. "Ultracode" runs at xhigh, so an Ultracode override followed
+// by an Extra high turn stays Ultracode. A later turn at another level ends it.
+#[cfg(test)]
+pub(super) fn effort_from_lines(lines: &[String]) -> Option<String> {
+    session_effort(lines).0
+}
+
+// `effort_from_lines`, plus whether the tail holds an `/effort` command.
+pub(super) fn session_effort(lines: &[String]) -> (Option<String>, bool) {
+    let mut command: Option<(usize, String)> = None;
+    let mut turn: Option<(usize, String)> = None;
+    // A turn after the command at a level other than xhigh ends an Ultracode override.
+    let mut other_turn_after_command = false;
+    for (index, line) in lines.iter().enumerate().rev() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if is_sidechain_entry(&entry) {
             continue;
         }
-        if let Some(effort) = read_command_effort(&entry) {
-            return Some(effort);
+        if command.is_none() {
+            command = read_command_effort(&entry).map(|effort| (index, effort));
+        }
+        if let Some(effort) = read_turn_effort(&entry) {
+            other_turn_after_command |= command.is_none() && effort != "Extra high";
+            turn.get_or_insert((index, effort));
+        }
+        if command.is_some() && turn.is_some() {
+            break;
         }
     }
-    None
+    let command_seen = command.is_some();
+    let Some((turn_index, turn_effort)) = turn else {
+        return (command.map(|(_, effort)| effort), command_seen);
+    };
+    let effort = match command {
+        Some((command_index, effort)) if command_index > turn_index => effort,
+        // shortcut: a level picked in the Desktop UI is not logged, so Ultracode stays
+        // until a turn at another level is logged, upgrade if the UI writes a log line.
+        Some((_, effort))
+            if effort == "Ultracode"
+                && turn_effort == "Extra high"
+                && !other_turn_after_command =>
+        {
+            effort
+        }
+        _ => turn_effort,
+    };
+    (Some(effort), command_seen)
+}
+
+// Effort of a main-thread assistant turn: top-level "perTurnEffort", else the
+// top-level "effort" of the same entry.
+pub(super) fn read_turn_effort(entry: &Value) -> Option<String> {
+    if entry.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    entry
+        .get("perTurnEffort")
+        .and_then(Value::as_str)
+        .and_then(effort_label)
+        .or_else(|| {
+            entry
+                .get("effort")
+                .and_then(Value::as_str)
+                .and_then(effort_label)
+        })
 }
 
 pub(super) fn read_command_effort(entry: &Value) -> Option<String> {
@@ -227,10 +324,11 @@ pub(super) fn parse_desktop_model_name(raw: &str) -> Option<DesktopModelCandidat
         } else {
             return None;
         };
-        let version =
-            extract_model_version(value, family).unwrap_or_else(|| default_model_version(family));
+        let version = extract_model_version(value, family)
+            .map(|version| format!(" {version}"))
+            .unwrap_or_default();
         let context = if lower.contains("1m") { " (1M)" } else { "" };
-        format!("Claude {family} {version}{context}")
+        format!("Claude {family}{version}{context}")
     };
 
     Some(DesktopModelCandidate {
@@ -316,17 +414,6 @@ pub(super) fn extract_model_version(value: &str, family: &str) -> Option<String>
     None
 }
 
-#[cfg(any(windows, test))]
-pub(super) fn default_model_version(family: &str) -> String {
-    match family {
-        "Haiku" => "4.5",
-        "Fable" => "5.1",
-        "Opus" => "5.5",
-        _ => "5",
-    }
-    .into()
-}
-
 pub(super) fn extract_effort_label(lower: &str) -> Option<String> {
     if lower.contains("ultracode") {
         Some("Ultracode".into())
@@ -382,20 +469,21 @@ pub(super) fn format_model_name(model_id: &str) -> Option<String> {
         return Some("Opus Plan / Sonnet".into());
     }
     // Fable is checked before Opus/Sonnet so a compound id resolves to its own
-    // family; the fallback version is the current release of each family.
-    for (family, display, fallback) in [
-        ("fable", "Fable", "5.1"),
-        ("opus", "Opus", "5.5"),
-        ("sonnet", "Sonnet", "5"),
-        ("haiku", "Haiku", "4.5"),
+    // family. Without a version the family is shown alone: a guessed one goes stale.
+    for (family, display) in [
+        ("fable", "Fable"),
+        ("opus", "Opus"),
+        ("sonnet", "Sonnet"),
+        ("haiku", "Haiku"),
     ] {
         if !id.contains(family) {
             continue;
         }
         let version = model_version_from_id(&parts, family)
             .or_else(|| extract_model_version(model_id, display))
-            .unwrap_or_else(|| fallback.into());
-        return Some(format!("Claude {display} {version}{context}"));
+            .map(|version| format!(" {version}"))
+            .unwrap_or_default();
+        return Some(format!("Claude {display}{version}{context}"));
     }
     sanitize_field(Some(model_id), 64)
 }
@@ -436,21 +524,21 @@ mod tests {
             ("anthropic.claude-opus-5-5", "Claude Opus 5.5"),
             ("claude-sonnet-5", "Claude Sonnet 5"),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
-            ("Fable", "Claude Fable 5.1"),
-            ("Opus", "Claude Opus 5.5"),
+            ("Fable", "Claude Fable"),
+            ("Opus", "Claude Opus"),
         ] {
             assert_eq!(format_model_name(id).as_deref(), Some(expected));
         }
         assert_eq!(
             parse_desktop_model_name("Opus").map(|model| model.model),
-            Some("Claude Opus 5.5".into())
+            Some("Claude Opus".into())
         );
         // A project named "claude-…" in the Desktop sidebar is not a model.
         // Usage rows are not models, and version 0 does not exist.
         assert!(parse_desktop_model_name("Weekly - Fable 0%").is_none());
         assert_eq!(
             parse_desktop_model_name("Fable 0").map(|model| model.model),
-            Some("Claude Fable 5.1".into())
+            Some("Claude Fable".into())
         );
         assert!(parse_desktop_model_name("claude-rpc").is_none());
         assert_eq!(
@@ -514,16 +602,30 @@ mod tests {
                 .as_deref(),
             Some("Claude Sonnet 5")
         );
-        // Family without a version falls back to the current release.
+        // A family without a version is shown alone, never with a guessed one.
         assert_eq!(
             parse_desktop_model_name("Opus")
                 .map(|candidate| candidate.model)
                 .as_deref(),
-            Some("Claude Opus 5.5")
+            Some("Claude Opus")
         );
         assert_eq!(
             format_model_name("claude-opusplan").as_deref(),
             Some("Opus Plan / Sonnet")
+        );
+    }
+
+    #[test]
+    fn keeps_the_context_window_without_a_version() {
+        assert_eq!(
+            format_model_name("opus[1m]").as_deref(),
+            Some("Claude Opus (1M)")
+        );
+        assert_eq!(
+            parse_desktop_model_name("Opus 1M")
+                .map(|candidate| candidate.model)
+                .as_deref(),
+            Some("Claude Opus (1M)")
         );
     }
 
@@ -607,5 +709,203 @@ mod tests {
         assert_eq!(parse_command_effort_text("set effort level to max"), None);
         assert_eq!(effort_label("xhigh").as_deref(), Some("Extra high"));
         assert_eq!(effort_label("nonsense"), None);
+    }
+
+    #[test]
+    fn reads_latest_main_thread_effort_from_lines() {
+        let command = |level: &str, sidechain: bool| {
+            json!({"type": "user", "isSidechain": sidechain, "message": {"role": "user",
+                "content": format!("<local-command-stdout>Set effort level to {level}</local-command-stdout>")}})
+            .to_string()
+        };
+        let lines = vec![
+            command("low", false),
+            command("high", false),
+            json!({"type": "assistant", "message": {"role": "assistant", "content": []}})
+                .to_string(),
+            "not json".to_string(),
+            command("max", true),
+        ];
+        assert_eq!(effort_from_lines(&lines).as_deref(), Some("High"));
+        assert_eq!(effort_from_lines(&lines[2..]), None);
+        assert_eq!(effort_from_lines(&[]), None);
+    }
+
+    fn assistant_turn(extra: Value) -> String {
+        let mut entry =
+            json!({"type": "assistant", "message": {"role": "assistant", "content": []}});
+        for (key, value) in extra.as_object().expect("object") {
+            entry[key] = value.clone();
+        }
+        entry.to_string()
+    }
+
+    fn effort_command(level: &str) -> String {
+        json!({"type": "user", "message": {"role": "user",
+            "content": format!("<local-command-stdout>Set effort level to {level}</local-command-stdout>")}})
+        .to_string()
+    }
+
+    #[test]
+    fn reads_the_effort_of_each_turn() {
+        let turn = |effort: &str| assistant_turn(json!({"perTurnEffort": effort}));
+        assert_eq!(effort_from_lines(&[turn("high")]).as_deref(), Some("High"));
+        assert_eq!(
+            effort_from_lines(&[assistant_turn(json!({"effort": "xhigh"}))]).as_deref(),
+            Some("Extra high")
+        );
+        assert_eq!(effort_from_lines(&[turn("max")]).as_deref(), Some("Max"));
+        assert_eq!(effort_from_lines(&[turn("low")]).as_deref(), Some("Low"));
+        // The latest turn wins.
+        assert_eq!(
+            effort_from_lines(&[turn("high"), turn("xhigh")]).as_deref(),
+            Some("Extra high")
+        );
+        // A turn without the field does not hide an earlier one.
+        assert_eq!(
+            effort_from_lines(&[turn("high"), assistant_turn(json!({}))]).as_deref(),
+            Some("High")
+        );
+        // An unknown perTurnEffort falls back to the top-level effort.
+        assert_eq!(
+            effort_from_lines(&[assistant_turn(
+                json!({"perTurnEffort": "auto", "effort": "medium"})
+            )])
+            .as_deref(),
+            Some("Medium")
+        );
+        // Sidechain turns and other "effort" keys are not the turn effort.
+        let sidechain = json!({"type": "assistant", "isSidechain": true, "perTurnEffort": "max"});
+        assert_eq!(
+            effort_from_lines(&[turn("low"), sidechain.to_string()]).as_deref(),
+            Some("Low")
+        );
+        let other_keys = [
+            json!({"type": "assistant", "wireToolInputs": {"toolu_1": {"effort": "max"}}}),
+            json!({"type": "api-request", "params": {"output_config": {"effort": "max"}}}),
+            json!({"type": "user", "effort": "max"}),
+        ];
+        for entry in other_keys {
+            assert_eq!(effort_from_lines(&[entry.to_string()]), None);
+        }
+    }
+
+    #[test]
+    fn desktop_code_tab_takes_the_session_effort_only_without_a_window_effort() {
+        let opus = || Some("Claude Opus 5.5".to_string());
+        let session = || Some("Extra high".to_string());
+        // Code tab, no effort on screen: the session effort is shown.
+        assert_eq!(
+            desktop_model_with_session_effort(opus(), None, Some("Code"), session(), false)
+                .as_deref(),
+            Some("Claude Opus 5.5 | Extra high")
+        );
+        // The window's own effort is kept.
+        assert_eq!(
+            desktop_model_with_session_effort(
+                Some("Claude Opus 5.5 | High".into()),
+                Some("High"),
+                Some("Code"),
+                session(),
+                false
+            )
+            .as_deref(),
+            Some("Claude Opus 5.5 | High")
+        );
+        // A model label that already names an effort is kept.
+        assert_eq!(
+            desktop_model_with_session_effort(
+                Some("Claude Opus 5.5 | Low".into()),
+                None,
+                Some("Code"),
+                session(),
+                false
+            )
+            .as_deref(),
+            Some("Claude Opus 5.5 | Low")
+        );
+        // Chat and Cowork tabs never take the session effort.
+        for mode in [Some("Chat"), Some("Cowork"), None] {
+            assert_eq!(
+                desktop_model_with_session_effort(opus(), None, mode, session(), false).as_deref(),
+                Some("Claude Opus 5.5")
+            );
+        }
+        // A terminal CLI is running: the session may be the CLI's, so no session effort.
+        assert_eq!(
+            desktop_model_with_session_effort(opus(), None, Some("Code"), session(), true)
+                .as_deref(),
+            Some("Claude Opus 5.5")
+        );
+        // No session effort: unchanged.
+        assert_eq!(
+            desktop_model_with_session_effort(opus(), None, Some("Code"), None, false).as_deref(),
+            Some("Claude Opus 5.5")
+        );
+        assert_eq!(
+            desktop_model_with_session_effort(None, None, Some("Code"), session(), false),
+            None
+        );
+    }
+
+    #[test]
+    fn newer_effort_command_or_turn_wins() {
+        let turn = |effort: &str| assistant_turn(json!({"perTurnEffort": effort}));
+        assert_eq!(
+            effort_from_lines(&[turn("high"), effort_command("low")]).as_deref(),
+            Some("Low")
+        );
+        assert_eq!(
+            effort_from_lines(&[effort_command("low"), turn("high")]).as_deref(),
+            Some("High")
+        );
+    }
+
+    #[test]
+    fn ultracode_runs_at_extra_high_in_the_turns() {
+        let turn = |effort: &str| assistant_turn(json!({"perTurnEffort": effort}));
+        assert_eq!(
+            effort_from_lines(&[effort_command("ultracode"), turn("xhigh"), turn("xhigh")])
+                .as_deref(),
+            Some("Ultracode")
+        );
+        // A later turn at another level means the override is gone.
+        assert_eq!(
+            effort_from_lines(&[effort_command("ultracode"), turn("xhigh"), turn("high")])
+                .as_deref(),
+            Some("High")
+        );
+        // Even when xhigh turns follow it: the High turn already ended Ultracode.
+        assert_eq!(
+            effort_from_lines(&[effort_command("ultracode"), turn("high"), turn("xhigh")])
+                .as_deref(),
+            Some("Extra high")
+        );
+    }
+
+    #[test]
+    fn ultracode_survives_its_command_leaving_the_tail() {
+        let session = |effort: &str, effort_command_seen| SessionInfo {
+            file: std::path::PathBuf::from("session.jsonl"),
+            started_at_ms: None,
+            model: None,
+            cwd: None,
+            title: None,
+            branch: None,
+            effort: Some(effort.into()),
+            effort_command_seen,
+            recent_cwds: Vec::new(),
+        };
+        let mut machine = StateMachine::default();
+        let mut resolve =
+            |effort, seen| resolve_session_effort(&mut machine, Some(&session(effort, seen)));
+        assert_eq!(resolve("Ultracode", true).as_deref(), Some("Ultracode"));
+        // `/effort ultracode` scrolled out: only the xhigh turns are left.
+        assert_eq!(resolve("Extra high", false).as_deref(), Some("Ultracode"));
+        // An explicit `/effort xhigh` in the tail is a real change.
+        assert_eq!(resolve("Extra high", true).as_deref(), Some("Extra high"));
+        resolve("Ultracode", true);
+        // A turn at another level ends it.
+        assert_eq!(resolve("High", false).as_deref(), Some("High"));
     }
 }

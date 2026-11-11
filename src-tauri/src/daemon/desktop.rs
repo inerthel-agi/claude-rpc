@@ -1,8 +1,139 @@
 use super::*;
 
-pub(super) fn read_desktop_info(process_ids: &[u32]) -> DesktopInfo {
+// What the Desktop UI walk saw, for the diagnostic report only.
+#[derive(Debug, Default)]
+pub(super) struct DesktopScanDebug {
+    elements: i32,
+    scanned: i32,
+    duration_ms: u128,
+    // Top model candidates by score, best first.
+    candidates: Vec<ScanCandidate>,
+    // Wording of the "Usage: ..." buttons, so the report shows what the limits
+    // parser has to match; see usage_label_shape.
+    usage_labels: Vec<String>,
+}
+
+#[derive(Debug)]
+struct ScanCandidate {
+    score: i32,
+    is_button: bool,
+    offscreen: bool,
+    chars: usize,
+    // The label itself, or "<text, N chars>" when it may be chat text.
+    label: String,
+}
+
+pub(super) fn format_scan_debug(scan: &DesktopScanDebug) -> Vec<String> {
+    let yes_no = |value: bool| if value { "yes" } else { "no" };
+    let mut lines = vec![format!(
+        "Desktop UI scan: {} elements, {} scanned, {} ms",
+        scan.elements, scan.scanned, scan.duration_ms
+    )];
+    for candidate in &scan.candidates {
+        lines.push(format!(
+            "  model candidate score {} (button {}, offscreen {}, {} chars): {}",
+            candidate.score,
+            yes_no(candidate.is_button),
+            yes_no(candidate.offscreen),
+            candidate.chars,
+            candidate.label
+        ));
+    }
+    for label in &scan.usage_labels {
+        lines.push(format!("  usage label: {label}"));
+    }
+    lines
+}
+
+#[cfg(any(windows, test))]
+fn model_candidate_score(
+    explicit_model: bool,
+    has_effort: bool,
+    offscreen: bool,
+    is_button: bool,
+) -> i32 {
+    (if explicit_model { 20 } else { 0 })
+        + if has_effort { 4 } else { 0 }
+        + if !offscreen { 3 } else { 1 }
+        + if is_button { 2 } else { 0 }
+}
+
+// True when nothing but model-picker vocabulary is left: any other word may
+// be a conversation title or a chat message, which must never be reported.
+#[cfg(any(windows, test))]
+fn is_pure_model_label(label: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "claude",
+        "model",
+        "fable",
+        "opus",
+        "sonnet",
+        "haiku",
+        "plan",
+        "1m",
+        "context",
+        "adaptive",
+        "extended",
+        "thinking",
+        "low",
+        "medium",
+        "high",
+        "extra",
+        "xhigh",
+        "max",
+        "ultracode",
+        "default",
+    ];
+    label
+        .to_lowercase()
+        .split(|ch: char| ch.is_whitespace() || ch.is_ascii_punctuation())
+        .filter(|token| !token.is_empty())
+        .all(|token| token.chars().all(|ch| ch.is_ascii_digit()) || WORDS.contains(&token))
+}
+
+// A usage label with every word outside the usage-button vocabulary replaced
+// by "?": a chat line that starts with "Usage:" can never reach the report.
+#[cfg(any(windows, test))]
+fn usage_label_shape(label: &str) -> String {
+    const WORDS: &[&str] = &[
+        "usage", "context", "of", "5-hour", "hour", "limit", "weekly", "all", "models", "fable",
+        "opus", "sonnet", "haiku", "current", "session", "resets", "in", "at", "hr", "hrs", "min",
+        "mins", "day", "days", "am", "pm", "mon", "tue", "wed", "thu", "fri", "sat", "sun", "·",
+        "/",
+    ];
+    let known = |token: &str| {
+        let core = token
+            .trim_matches(|ch: char| matches!(ch, '(' | ')' | ',' | ':'))
+            .to_lowercase();
+        core.is_empty()
+            || WORDS.contains(&core.as_str())
+            || (core.chars().any(|ch| ch.is_ascii_digit())
+                && core
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ':' | '%' | 'k' | 'm')))
+    };
+    label
+        .split_whitespace()
+        .map(|token| if known(token) { token } else { "?" })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(any(windows, test))]
+fn candidate_label(label: &str) -> String {
+    if is_pure_model_label(label) {
+        label.to_string()
+    } else {
+        format!("<text, {} chars>", label.chars().count())
+    }
+}
+
+pub(super) fn read_desktop_info(
+    process_ids: &[u32],
+    debug: Option<&mut DesktopScanDebug>,
+) -> DesktopInfo {
     let mut info = read_desktop_config_info();
-    if let Some(ui_info) = read_desktop_ui_info(process_ids, info.mode.as_deref()) {
+    if let Some(ui_info) = read_desktop_ui_info(process_ids, info.mode.as_deref(), debug) {
         if ui_info.mode.is_some() {
             info.mode = ui_info.mode;
         }
@@ -48,21 +179,44 @@ pub(super) fn read_desktop_config_info() -> DesktopInfo {
 pub(super) fn read_desktop_ui_info(
     process_ids: &[u32],
     fallback_mode: Option<&str>,
+    debug: Option<&mut DesktopScanDebug>,
 ) -> Option<DesktopInfo> {
     let hwnd = find_desktop_window(process_ids)?;
-    let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    if hr.is_err() {
-        return None;
+    unsafe { read_desktop_ui_info_from_window(hwnd, fallback_mode, debug) }.ok()
+}
+
+#[cfg(windows)]
+thread_local! {
+    static COM_INITIALIZED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static UI_AUTOMATION: std::cell::RefCell<Option<IUIAutomation>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+// Setting up COM and the UI Automation object cost more than walking a small
+// Desktop tree: do it once per thread. COM stays initialized until the thread
+// ends; a failed creation is retried on the next scan.
+#[cfg(windows)]
+fn ui_automation() -> windows::core::Result<IUIAutomation> {
+    if !COM_INITIALIZED.get() {
+        // S_FALSE (already initialized in this mode) is a success; a changed
+        // mode is an error.
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
+        COM_INITIALIZED.set(true);
     }
-    let info = unsafe { read_desktop_ui_info_from_window(hwnd, fallback_mode) }.ok();
-    unsafe { CoUninitialize() };
-    info
+    if let Some(automation) = UI_AUTOMATION.with_borrow(Option::clone) {
+        return Ok(automation);
+    }
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }?;
+    UI_AUTOMATION.set(Some(automation.clone()));
+    Ok(automation)
 }
 
 #[cfg(not(windows))]
 pub(super) fn read_desktop_ui_info(
     _process_ids: &[u32],
     _fallback_mode: Option<&str>,
+    _debug: Option<&mut DesktopScanDebug>,
 ) -> Option<DesktopInfo> {
     None
 }
@@ -108,11 +262,20 @@ pub(super) fn find_desktop_window(process_ids: &[u32]) -> Option<HWND> {
 pub(super) unsafe fn read_desktop_ui_info_from_window(
     hwnd: HWND,
     fallback_mode: Option<&str>,
+    mut debug: Option<&mut DesktopScanDebug>,
 ) -> windows::core::Result<DesktopInfo> {
-    let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+    let started = debug.is_some().then(std::time::Instant::now);
+    let automation = ui_automation()?;
     let root = automation.ElementFromHandle(hwnd)?;
     let condition = automation.CreateTrueCondition()?;
-    let elements = root.FindAll(TreeScope_Descendants, &condition)?;
+    // One cross-process fetch for the three properties read below, instead of
+    // three calls per element. The elements keep full references, so the
+    // live toggle-pattern lookups in is_toggle_on still work on them.
+    let cache_request = automation.CreateCacheRequest()?;
+    cache_request.AddProperty(UIA_NamePropertyId)?;
+    cache_request.AddProperty(UIA_ControlTypePropertyId)?;
+    cache_request.AddProperty(UIA_IsOffscreenPropertyId)?;
+    let elements = root.FindAllBuildCache(TreeScope_Descendants, &condition, &cache_request)?;
     let length = elements.Length()?;
     // The sidebar (mode markers) is at the start of the tree and the composer
     // (model, effort, usage buttons) at the end, with the chat transcript in
@@ -131,7 +294,7 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
         let Ok(element) = elements.GetElement(index) else {
             continue;
         };
-        let Ok(name_bstr) = element.CurrentName() else {
+        let Ok(name_bstr) = element.CachedName() else {
             continue;
         };
         let name = name_bstr.to_string();
@@ -143,15 +306,22 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
         names.push(name.to_string());
 
         let offscreen = element
-            .CurrentIsOffscreen()
+            .CachedIsOffscreen()
             .map(|value| value.as_bool())
             .unwrap_or(true);
         let is_button = element
-            .CurrentControlType()
+            .CachedControlType()
             .map(|value| value == UIA_ButtonControlTypeId)
             .unwrap_or(false);
 
         let norm = normalize_ui_label(name);
+        if let Some(debug) = debug.as_mut() {
+            if is_button && norm.starts_with("usage:") && debug.usage_labels.len() < 3 {
+                debug
+                    .usage_labels
+                    .push(truncate(usage_label_shape(name), 200));
+            }
+        }
         // The Code tab composer exposes its pickers as "Model: Opus 5.5" and
         // "Effort: Medium" buttons. Those are authoritative; free text (chat
         // messages, the usage popover's "Weekly · Fable" / "Max (5x)") must not
@@ -167,10 +337,21 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
             .then(|| parse_desktop_model_name(name))
             .flatten()
         {
-            let score = if explicit_model { 20 } else { 0 }
-                + if candidate.effort.is_some() { 4 } else { 0 }
-                + if !offscreen { 3 } else { 1 }
-                + if is_button { 2 } else { 0 };
+            let score = model_candidate_score(
+                explicit_model,
+                candidate.effort.is_some(),
+                offscreen,
+                is_button,
+            );
+            if let Some(debug) = debug.as_mut() {
+                debug.candidates.push(ScanCandidate {
+                    score,
+                    is_button,
+                    offscreen,
+                    chars: name.chars().count(),
+                    label: candidate_label(name),
+                });
+            }
             if best_model
                 .as_ref()
                 .map(|(_, best_score)| score > *best_score)
@@ -207,6 +388,16 @@ pub(super) unsafe fn read_desktop_ui_info_from_window(
     }
     info.adaptive |= adaptive;
     info.extended |= extended;
+    if let Some(debug) = debug {
+        debug.elements = length;
+        debug.scanned = head + (length - tail_start);
+        debug.duration_ms = started.map_or(0, |started| started.elapsed().as_millis());
+        // Stable: equal scores keep tree order, as the winner selection does.
+        debug
+            .candidates
+            .sort_by_key(|candidate| std::cmp::Reverse(candidate.score));
+        debug.candidates.truncate(5);
+    }
     Ok(info)
 }
 
@@ -409,6 +600,8 @@ mod tests {
             cwd: None,
             title: None,
             branch: None,
+            effort: None,
+            effort_command_seen: false,
             recent_cwds: Vec::new(),
         };
         // A loose UI match in the Code tab loses to the session log.
@@ -459,5 +652,56 @@ mod tests {
         ];
         let info = desktop_info_from_ui_names(&names, Some("Chat"));
         assert_eq!(info.mode.as_deref(), Some("Code"));
+    }
+
+    #[test]
+    fn scores_model_candidates() {
+        // "Model: ..." button, effort named, on screen.
+        assert_eq!(
+            model_candidate_score(true, true, false, true),
+            20 + 4 + 3 + 2
+        );
+        // Bare offscreen text.
+        assert_eq!(model_candidate_score(false, false, true, false), 1);
+        assert_eq!(model_candidate_score(false, true, false, false), 4 + 3);
+        assert_eq!(model_candidate_score(false, false, false, true), 3 + 2);
+    }
+
+    #[test]
+    fn keeps_only_usage_button_wording() {
+        for label in [
+            "Usage: Context 146.8k / 1M (15%), 6% of 5-hour limit, Resets in 4 hr 33 min",
+            "Usage: Weekly · all models: 44%, Resets Sun 3:00 AM",
+            "Usage: 52% of 5-hour limit, Resets at 10:10 PM",
+        ] {
+            assert_eq!(usage_label_shape(label), label);
+        }
+        assert_eq!(
+            usage_label_shape("Usage: my password is hunter2, 10% done"),
+            "Usage: ? ? ? ? 10% ?"
+        );
+    }
+
+    #[test]
+    fn shows_only_pure_model_labels() {
+        for label in [
+            "Opus 5.5",
+            "Model: Opus 5.5",
+            "Claude Sonnet 5 Adaptive",
+            "Opus 5 (1M context) (default)",
+            "Model: Fable 5.1, Extra high",
+        ] {
+            assert!(is_pure_model_label(label), "{label}");
+            assert_eq!(candidate_label(label), label);
+        }
+        for label in [
+            "Opus vs Sonnet max tokens",
+            "claude-rpc",
+            "Fix the opus bug",
+            "Opus r\u{e9}sum\u{e9}",
+        ] {
+            assert!(!is_pure_model_label(label), "{label}");
+        }
+        assert_eq!(candidate_label("Fix the opus bug"), "<text, 16 chars>");
     }
 }

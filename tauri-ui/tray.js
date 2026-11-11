@@ -192,18 +192,22 @@ function renderStatus(status) {
     chartPeak.textContent = svg ? t('tray.peak', { percent: peakOf(status.history5h) }) : '';
   }
 
+  // Fable weekly keeps its row while Claude does not report it, as in Settings.
+  const rows = limits.filter((limit) => limit !== main);
+  if (main && !limits.some((limit) => limit.label === 'Fable')) {
+    rows.push({ label: 'Fable', missing: true });
+  }
   limitsEl.replaceChildren(
-    ...limits
-      .filter((limit) => limit !== main)
-      .map((limit) => {
+    ...rows.map((limit) => {
         const percent = clampPercent(limit.usedPercent);
         const row = document.createElement('div');
+        row.classList.toggle('unknown', !!limit.missing);
         const head = document.createElement('div');
         head.className = 'limit-head';
         const label = document.createElement('span');
         label.textContent = LIMIT_KEYS[limit.label] ? t(LIMIT_KEYS[limit.label]) : limit.label;
         const value = document.createElement('b');
-        value.textContent = `${percent}%`;
+        value.textContent = limit.missing ? '—' : `${percent}%`;
         head.append(label, value);
         const bar = document.createElement('div');
         bar.className = 'bar';
@@ -213,10 +217,10 @@ function renderStatus(status) {
         bar.append(fill);
         row.append(head, bar);
         const parts = resetParts(limit.reset);
-        if (parts) {
+        if (parts || limit.missing) {
           const reset = document.createElement('small');
           reset.className = 'limit-reset';
-          reset.textContent = parts.absolute || parts.relative;
+          reset.textContent = limit.missing ? t('tray.notReported') : parts.absolute || parts.relative;
           row.append(reset);
         }
         return row;

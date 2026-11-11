@@ -19,7 +19,9 @@ pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo
             break;
         }
         if let Some(cwd) = read_session_cwd(path).filter(|cwd| is_user_project_cwd(cwd)) {
-            recent_cwds.push(cwd);
+            if !recent_cwds.contains(&cwd) {
+                recent_cwds.push(cwd);
+            }
             recent.push((path.clone(), *mtime));
         }
     }
@@ -40,6 +42,7 @@ pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo
     let lines = read_tail_lines(&file, 256 * 1024).unwrap_or_default();
     let model = model_from_lines(&lines);
     let (title, branch) = meta_from_lines(&lines);
+    let (effort, effort_command_seen) = session_effort(&lines);
     let cwd = read_session_cwd(&file);
     Some(SessionInfo {
         file,
@@ -48,6 +51,8 @@ pub(super) fn read_session_info(prompts: &mut PromptCache) -> Option<SessionInfo
         cwd,
         title,
         branch,
+        effort,
+        effort_command_seen,
         recent_cwds,
     })
 }
@@ -126,35 +131,40 @@ pub(super) fn meta_from_lines(lines: &[String]) -> (Option<String>, Option<Strin
     (title, branch)
 }
 
+// User session logs sit directly in projects/<project>/. Deeper .jsonl files
+// (<session>/subagents/agent-*.jsonl, workflows) are subagent logs, not the
+// user's session: they would swap the model and start time.
 pub(super) fn collect_jsonl_candidates(root: &Path, max_age_ms: u64) -> Vec<(PathBuf, u64)> {
-    fn walk(dir: &Path, depth: usize, now: u64, max_age_ms: u64, out: &mut Vec<(PathBuf, u64)>) {
-        if depth > 3 {
-            return;
+    let now = now_ms();
+    let mut out = Vec::new();
+    let Ok(projects) = fs::read_dir(root) else {
+        return out;
+    };
+    for project in projects.flatten() {
+        if !project
+            .file_type()
+            .is_ok_and(|file_type| file_type.is_dir())
+        {
+            continue;
         }
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => return,
+        let Ok(entries) = fs::read_dir(project.path()) else {
+            continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => continue,
-            };
-            if file_type.is_dir() {
-                // <session>/subagents/agent-*.jsonl are Task subagent logs, not
-                // the user's session: they would swap the model and start time.
-                if entry.file_name() != "subagents" {
-                    walk(&path, depth + 1, now, max_age_ms, out);
-                }
-                continue;
-            }
-            if !file_type.is_file()
+            if !entry.file_type().is_ok_and(|file_type| file_type.is_file())
                 || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
             {
                 continue;
             }
-            let Some(mtime) = modified_ms(&path) else {
+            // The DirEntry's metadata comes with the directory listing on
+            // Windows; path.metadata() would open every file.
+            let Some(mtime) = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(system_time_ms)
+            else {
                 continue;
             };
             if now.saturating_sub(mtime) > max_age_ms {
@@ -163,9 +173,6 @@ pub(super) fn collect_jsonl_candidates(root: &Path, max_age_ms: u64) -> Vec<(Pat
             out.push((path, mtime));
         }
     }
-
-    let mut out = Vec::new();
-    walk(root, 0, now_ms(), max_age_ms, &mut out);
     out
 }
 
@@ -359,6 +366,29 @@ bug"}),
             parse_iso_ms("2026-11-05T10:01:00Z")
         );
         assert_eq!(prompt_from_lines(&lines[2..]), None);
+    }
+
+    #[test]
+    fn lists_only_logs_directly_in_project_folders() {
+        let root = std::env::temp_dir().join(format!(
+            "claude-rpc-session-candidates-{}",
+            std::process::id()
+        ));
+        let project = root.join("project");
+        let session = project.join("session");
+        fs::create_dir_all(session.join("subagents")).unwrap();
+        for path in [
+            project.join("a.jsonl"),
+            project.join("notes.txt"),
+            session.join("b.jsonl"),
+            session.join("subagents").join("agent.jsonl"),
+        ] {
+            fs::write(path, "{}\n").unwrap();
+        }
+        let found = collect_jsonl_candidates(&root, 60 * 60 * 1000);
+        fs::remove_dir_all(&root).unwrap();
+        let paths: Vec<_> = found.into_iter().map(|(path, _)| path).collect();
+        assert_eq!(paths, vec![project.join("a.jsonl")]);
     }
 
     #[test]

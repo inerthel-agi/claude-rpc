@@ -21,7 +21,7 @@ pub(crate) use usage::*;
 use util::*;
 pub(crate) use util::{app_dir, now_ms};
 
-use crate::config::{load_config, normalize_mode, read_config, ClaudeConfig};
+use crate::config::{load_config, normalize_mode, ClaudeConfig};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex, MutexGuard,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -43,8 +43,7 @@ use windows::{
         Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM},
         System::{
             Com::{
-                CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-                COINIT_APARTMENTTHREADED,
+                CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
             },
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -59,7 +58,8 @@ use windows::{
             Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTogglePattern,
                 IUIAutomationTreeWalker, ToggleState_On, TreeScope_Descendants,
-                UIA_ButtonControlTypeId, UIA_TogglePatternId,
+                UIA_ButtonControlTypeId, UIA_ControlTypePropertyId, UIA_IsOffscreenPropertyId,
+                UIA_NamePropertyId, UIA_TogglePatternId,
             },
             WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible},
         },
@@ -67,9 +67,8 @@ use windows::{
 };
 
 const DEFAULT_DISCORD_CLIENT_ID: &str = "1483898157854363799";
-const SCAN_INTERVAL_MS: u64 = 250;
+const SCAN_INTERVAL_MS: u64 = 1_000;
 const RPC_REFRESH_INTERVAL_MS: u64 = 15_000;
-const IDLE_GRACE_MS: u64 = 10_000;
 const ACTIVITY_PLAYING: u8 = 0;
 const ACTIVITY_LISTENING: u8 = 2;
 const ACTIVITY_WATCHING: u8 = 3;
@@ -160,32 +159,51 @@ struct SessionInfo {
     cwd: Option<String>,
     title: Option<String>,
     branch: Option<String>,
+    // Session effort from the log tail (model::session_effort), and whether that
+    // tail still holds an `/effort` command.
+    effort: Option<String>,
+    effort_command_seen: bool,
     // Working directories of every session written in the last 10 minutes.
     recent_cwds: Vec<String>,
 }
 
-// The process scan runs every 250 ms, but walking the Desktop UI tree and
+// The process scan runs every second, but walking the Desktop UI tree and
 // reading the provider files are far costlier and change rarely: cache them.
+// The Desktop UI cache lives between these bounds, see `desktop_ui_ttl`.
 const DESKTOP_UI_TTL_MS: u64 = 2_000;
+const DESKTOP_UI_MAX_TTL_MS: u64 = 15_000;
 const PROVIDER_TTL_MS: u64 = 5_000;
 const SESSION_TTL_MS: u64 = 1_000;
 
+// A full Desktop accessibility tree takes 100-500 ms to walk and makes Claude
+// rebuild it: keep the scan under 5 % of the time by waiting 20x its duration.
+fn desktop_ui_ttl(scan_ms: u64) -> u64 {
+    scan_ms
+        .saturating_mul(20)
+        .clamp(DESKTOP_UI_TTL_MS, DESKTOP_UI_MAX_TTL_MS)
+}
+
 #[derive(Default)]
 pub(crate) struct StateMachine {
-    desktop_cache: Option<(u64, Vec<u32>, DesktopInfo)>,
+    // (stamped at, TTL, Desktop process ids, info)
+    desktop_cache: Option<(u64, u64, Vec<u32>, DesktopInfo)>,
     oauth_inflight: Option<std::sync::mpsc::Receiver<Result<OAuthUsage, OAuthFetchError>>>,
     credits: Option<UsageCredits>,
     provider_cache: Option<(u64, String, Option<String>)>,
     session_cache: Option<(u64, Option<SessionInfo>)>,
     history_5h: Vec<[u64; 2]>,
     history_loaded: bool,
-    last_non_idle: Option<DetectionResult>,
-    last_non_idle_at_ms: u64,
     cached_limits: Vec<UsageLimitEntry>,
     limits_cache_loaded: bool,
     limits_cache_written_at: u64,
     oauth_last_attempt_ms: u64,
     oauth_backoff_until_ms: u64,
+    // Credentials mtime seen when the token endpoint refused the refresh
+    // token; no fetch starts while the file still has it.
+    oauth_refused_mtime: Option<Option<u64>>,
+    oauth_sign_in_checked_ms: u64,
+    // Credentials mtime when the in-flight request started.
+    oauth_attempt_mtime: Option<u64>,
     last_session_mtime: u64,
     pending_activity_refresh: bool,
     cached_code_model: Option<String>,
@@ -195,6 +213,175 @@ pub(crate) struct StateMachine {
     // The title is re-logged often but can scroll out of the read tail.
     cached_session_title: Option<(PathBuf, String)>,
     session_prompts: PromptCache,
+    process_cache: ProcessCache,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscordState {
+    Connected,
+    Disconnected,
+    Paused,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResetKind {
+    None,
+    Iso,
+    Text,
+}
+
+#[derive(Debug, Clone)]
+struct DiagBucket {
+    label: String,
+    used_percent: u8,
+    updated_at_ms: u64,
+    reset: ResetKind,
+}
+
+// Daemon-thread state that diagnostic_report() cannot otherwise see: the
+// daemon records it here and the report copies it.
+#[derive(Debug, Clone)]
+struct DaemonDiag {
+    oauth: Option<(Result<(), OAuthFetchError>, u64)>,
+    oauth_backoff_until_ms: u64,
+    oauth_blocked: bool,
+    discord: Option<(DiscordState, u64)>,
+    config_error: Option<String>,
+    buckets: Vec<DiagBucket>,
+}
+
+static DIAG: Mutex<DaemonDiag> = Mutex::new(DaemonDiag {
+    oauth: None,
+    oauth_backoff_until_ms: 0,
+    oauth_blocked: false,
+    discord: None,
+    config_error: None,
+    buckets: Vec::new(),
+});
+
+fn diag() -> MutexGuard<'static, DaemonDiag> {
+    DIAG.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn record_discord_state(state: DiscordState) {
+    let mut diag = diag();
+    if diag.discord.map(|(current, _)| current) != Some(state) {
+        diag.discord = Some((state, now_ms()));
+    }
+}
+
+fn record_oauth_outcome(
+    outcome: Result<(), OAuthFetchError>,
+    at_ms: u64,
+    backoff_until_ms: u64,
+    blocked: bool,
+) {
+    let mut diag = diag();
+    diag.oauth = Some((outcome, at_ms));
+    diag.oauth_backoff_until_ms = backoff_until_ms;
+    diag.oauth_blocked = blocked;
+}
+
+// An ISO reset comes from the OAuth API; Desktop shows free text.
+fn reset_kind(reset: Option<&str>) -> ResetKind {
+    match reset {
+        None => ResetKind::None,
+        Some(reset) if reset.contains('T') && parse_iso_ms(reset).is_some() => ResetKind::Iso,
+        Some(_) => ResetKind::Text,
+    }
+}
+
+fn record_limit_buckets(entries: &[UsageLimitEntry]) {
+    let buckets = entries
+        .iter()
+        .map(|entry| DiagBucket {
+            label: entry.label.clone(),
+            used_percent: entry.used_percent,
+            updated_at_ms: entry.updated_at_ms,
+            reset: reset_kind(entry.reset.as_deref()),
+        })
+        .collect();
+    diag().buckets = buckets;
+}
+
+// serde errors quote the offending value, which can be a private project path.
+fn redact_quoted(text: &str) -> String {
+    let mut out = String::new();
+    let mut open = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        match open {
+            None => {
+                out.push(ch);
+                if matches!(ch, '"' | '`') {
+                    open = Some(ch);
+                }
+            }
+            Some(_) if escaped => escaped = false,
+            Some(_) if ch == '\\' => escaped = true,
+            Some(quote) if ch == quote => {
+                out.push_str("...");
+                out.push(ch);
+                open = None;
+            }
+            Some(_) => {}
+        }
+    }
+    out
+}
+
+fn format_diag(diag: &DaemonDiag, now: u64) -> Vec<String> {
+    let ago = |at: u64| format!("{} s ago", now.saturating_sub(at) / 1_000);
+    let mut lines = Vec::new();
+    lines.push(match &diag.oauth {
+        None => "OAuth usage: never".to_string(),
+        Some((outcome, at)) => {
+            let outcome = match outcome {
+                Ok(()) => "Ok".to_string(),
+                Err(error) => error.to_string(),
+            };
+            let mut line = format!("OAuth usage: {outcome}, {}", ago(*at));
+            if diag.oauth_blocked {
+                line.push_str(", waiting for a new Claude Code sign-in");
+            } else if diag.oauth_backoff_until_ms > now {
+                let wait = (diag.oauth_backoff_until_ms - now).div_ceil(1_000);
+                line.push_str(&format!(", retry in {wait} s"));
+            }
+            line
+        }
+    });
+    lines.push(match diag.discord {
+        None => "Discord: no state yet".to_string(),
+        Some((state, at)) => {
+            let state = format!("{state:?}").to_lowercase();
+            format!("Discord: {state}, changed {}", ago(at))
+        }
+    });
+    lines.push(match &diag.config_error {
+        None => "Config: loaded".to_string(),
+        Some(error) => format!("Config: load error ({})", redact_quoted(error)),
+    });
+    if diag.buckets.is_empty() {
+        lines.push("Usage buckets: none known".into());
+    }
+    for bucket in &diag.buckets {
+        let updated = if bucket.updated_at_ms == 0 {
+            "never".to_string()
+        } else {
+            ago(bucket.updated_at_ms)
+        };
+        let reset = match bucket.reset {
+            ResetKind::None => "none",
+            ResetKind::Iso => "ISO (OAuth)",
+            ResetKind::Text => "text (Desktop)",
+        };
+        lines.push(format!(
+            "Usage bucket {}: {}%, updated {updated}, reset {reset}",
+            bucket.label, bucket.used_percent
+        ));
+    }
+    lines
 }
 
 pub fn run(
@@ -211,15 +398,20 @@ pub fn run(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_DISCORD_CLIENT_ID.to_string());
     let scan_interval_ms = parse_env_u64("SCAN_INTERVAL_MS", SCAN_INTERVAL_MS, 250);
-    let idle_grace_ms = parse_env_u64("IDLE_GRACE_MS", IDLE_GRACE_MS, 0);
 
     let mut machine = StateMachine::default();
     let mut ipc: Option<DiscordIpc> = None;
     let mut last_key = String::new();
     let mut last_rpc_refresh_at = 0;
     let mut config_modified = modified_ms(&config_path);
-    let mut config = read_config(&config_path);
-    let mut result = detect(&mut machine, idle_grace_ms, limit_visibility(&config));
+    let mut config = ClaudeConfig::default();
+    // Same as config::load_or_paused, without reading the file twice. An
+    // unreadable file is read again every second (it may be mid-write).
+    if !apply_loaded_config(&mut config, load_config(&config_path)) {
+        config_modified = None;
+    }
+    let mut config_retry_at = 0;
+    let mut result = detect(&mut machine, limit_visibility(&config));
     let mut last_scan_at = 0;
     let mut last_status = Value::Null;
 
@@ -229,6 +421,9 @@ pub fn run(
         if force_refresh.swap(false, Ordering::SeqCst) {
             machine.oauth_last_attempt_ms = 0;
             machine.oauth_backoff_until_ms = 0;
+            machine.oauth_refused_mtime = None;
+            diag().oauth_backoff_until_ms = 0;
+            diag().oauth_blocked = false;
             machine.pending_activity_refresh = true;
             machine.desktop_cache = None;
             machine.provider_cache = None;
@@ -237,12 +432,13 @@ pub fn run(
         }
 
         let current_modified = modified_ms(&config_path);
-        if current_modified != config_modified {
-            config_modified = current_modified;
-            if let Ok(fresh) = load_config(&config_path) {
-                config = fresh;
+        if current_modified != config_modified && now_ms() >= config_retry_at {
+            if apply_loaded_config(&mut config, load_config(&config_path)) {
+                config_modified = current_modified;
+            } else {
+                config_retry_at = now_ms() + 1_000;
             }
-            result = detect(&mut machine, idle_grace_ms, limit_visibility(&config));
+            result = detect(&mut machine, limit_visibility(&config));
             last_scan_at = now_ms();
             last_key.clear();
         }
@@ -252,12 +448,15 @@ pub fn run(
             ipc = DiscordIpc::connect(&client_id).ok();
             if ipc.is_some() {
                 last_key.clear();
+                record_discord_state(DiscordState::Connected);
+            } else {
+                record_discord_state(DiscordState::Disconnected);
             }
         }
 
         let now = now_ms();
         if now.saturating_sub(last_scan_at) >= scan_interval_ms {
-            result = detect(&mut machine, idle_grace_ms, limit_visibility(&config));
+            result = detect(&mut machine, limit_visibility(&config));
             last_scan_at = now;
         }
 
@@ -280,6 +479,7 @@ pub fn run(
             ipc = None;
             last_key.clear();
             last_rpc_refresh_at = 0;
+            record_discord_state(DiscordState::Paused);
         } else if key != last_key
             || now.saturating_sub(last_rpc_refresh_at) >= RPC_REFRESH_INTERVAL_MS
         {
@@ -293,6 +493,7 @@ pub fn run(
                     Ok(()) => {
                         last_key = key;
                         last_rpc_refresh_at = now;
+                        record_discord_state(DiscordState::Connected);
                     }
                     // Discord answered but rejected this activity: keep the
                     // connection and wait for the next change or refresh
@@ -300,11 +501,13 @@ pub fn run(
                     Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
                         last_key = key;
                         last_rpc_refresh_at = now;
+                        record_discord_state(DiscordState::Rejected);
                     }
                     Err(_) => {
                         ipc = None;
                         last_key.clear();
                         last_rpc_refresh_at = 0;
+                        record_discord_state(DiscordState::Disconnected);
                     }
                 }
             }
@@ -319,11 +522,7 @@ pub fn run(
     clear_status(&status_path);
 }
 
-fn detect(
-    machine: &mut StateMachine,
-    idle_grace_ms: u64,
-    limit_visibility: LimitVisibility,
-) -> DetectionResult {
+fn detect(machine: &mut StateMachine, limit_visibility: LimitVisibility) -> DetectionResult {
     let mut desktop_found = false;
     let mut desktop_process_ids = Vec::new();
     // Every Claude Code process (it makes Claude Code the client when Desktop
@@ -334,7 +533,7 @@ fn detect(
     let mut cli_count = 0usize;
     let mut oldest = None;
 
-    for process in scan_claude_processes() {
+    for process in scan_claude_processes(&mut machine.process_cache) {
         if is_desktop_process(&process) {
             desktop_found = true;
             desktop_process_ids.push(process.process_id);
@@ -350,8 +549,8 @@ fn detect(
         }
     }
 
-    // On platforms with process detection, neither a recently written log nor
-    // the idle grace cache is evidence that a Claude client is still running.
+    // On platforms with process detection, a recently written log is not
+    // evidence that a Claude client is still running.
     if cfg!(windows) && !desktop_found && code_count == 0 {
         // Usage limits and the plan stay tracked for the tray card even with
         // Claude closed.
@@ -468,6 +667,16 @@ fn detect(
         let effort = resolve_code_effort(machine, session.as_ref());
         result.model = append_code_effort(result.model, effort);
     }
+    if client == ClientType::Desktop {
+        let effort = resolve_session_effort(machine, session.as_ref());
+        result.model = desktop_model_with_session_effort(
+            result.model,
+            desktop.effort.as_deref(),
+            result.mode.as_deref(),
+            effort,
+            result.cli_alongside,
+        );
+    }
 
     let coding = client == ClientType::Code || result.mode.as_deref() == Some("Code");
     if let Some(session) = session.as_ref().filter(|session| {
@@ -479,17 +688,8 @@ fn detect(
         result.git_branch = session.branch.clone();
     }
 
-    let now = now_ms();
     if result.client != ClientType::Idle {
-        machine.last_non_idle = Some(result.clone());
-        machine.last_non_idle_at_ms = now;
         return result;
-    }
-
-    if now.saturating_sub(machine.last_non_idle_at_ms) <= idle_grace_ms {
-        if let Some(last) = machine.last_non_idle.clone() {
-            return last;
-        }
     }
 
     DetectionResult {
@@ -502,17 +702,36 @@ fn detect(
     }
 }
 
+// A readable config.json replaces the settings; an unreadable one pauses
+// publishing (the settings window says nothing is published) and keeps the rest.
+// Returns whether the file was read.
+fn apply_loaded_config(config: &mut ClaudeConfig, loaded: Result<ClaudeConfig, String>) -> bool {
+    diag().config_error = loaded.as_ref().err().cloned();
+    match loaded {
+        Ok(fresh) => {
+            *config = fresh;
+            true
+        }
+        Err(_) => {
+            config.dnd = true;
+            false
+        }
+    }
+}
+
 fn cached_desktop_info(machine: &mut StateMachine, process_ids: &[u32]) -> DesktopInfo {
     let now = now_ms();
-    if let Some((at, ids, info)) = &machine.desktop_cache {
-        if ids == process_ids && now.saturating_sub(*at) < DESKTOP_UI_TTL_MS {
+    if let Some((at, ttl, ids, info)) = &machine.desktop_cache {
+        if ids == process_ids && now.saturating_sub(*at) < *ttl {
             return info.clone();
         }
     }
-    let info = read_desktop_info(process_ids);
+    let start = std::time::Instant::now();
+    let info = read_desktop_info(process_ids, None);
+    let ttl = desktop_ui_ttl(start.elapsed().as_millis() as u64);
     // Stamp after the read: a slow UI Automation walk (long chat, busy Claude
     // window) must not leave the cache already expired and rescan every tick.
-    machine.desktop_cache = Some((now_ms(), process_ids.to_vec(), info.clone()));
+    machine.desktop_cache = Some((now_ms(), ttl, process_ids.to_vec(), info.clone()));
     info
 }
 
@@ -581,7 +800,7 @@ fn cached_provider(machine: &mut StateMachine) -> (String, Option<String>) {
 // detected labels and which source won.
 pub(crate) fn diagnostic_report() -> String {
     let mut lines = Vec::new();
-    let processes = scan_claude_processes();
+    let processes = scan_claude_processes(&mut ProcessCache::new());
     lines.push(format!("Claude processes: {}", processes.len()));
     let mut desktop_ids = Vec::new();
     for process in &processes {
@@ -602,7 +821,8 @@ pub(crate) fn diagnostic_report() -> String {
     if desktop_ids.is_empty() {
         lines.push("Desktop: not running".into());
     } else {
-        let info = read_desktop_info(&desktop_ids);
+        let mut scan = DesktopScanDebug::default();
+        let info = read_desktop_info(&desktop_ids, Some(&mut scan));
         lines.push(format!(
             "Desktop: mode {:?}, UI model {:?} (Model button: {}), effort {:?}, usage rows read {}",
             info.mode,
@@ -615,22 +835,26 @@ pub(crate) fn diagnostic_report() -> String {
             "Desktop model shown: {:?}",
             detect_desktop_model(&info, session.as_ref())
         ));
+        lines.extend(format_scan_debug(&scan));
     }
     match &session {
         Some(session) => lines.push(format!(
-            "Latest session: {} (model {:?})",
+            "Latest session: {} (model {:?}, effort {:?})",
             session
                 .file
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            session.model
+            session.model,
+            session.effort
         )),
         None => lines.push("Latest session: none in the last 24 h".into()),
     }
     let provider = detect_provider();
     let plan = (provider == "Subscription").then(detect_plan).flatten();
     lines.push(format!("Provider: {provider}, plan {plan:?}"));
+    let snapshot = diag().clone();
+    lines.extend(format_diag(&snapshot, now_ms()));
     lines.join(
         "
 ",
@@ -670,5 +894,228 @@ mod tests {
             activity_start(Some(now + 5_000), Some(now), desktop_opened, now),
             desktop_opened
         );
+    }
+
+    #[test]
+    fn formats_daemon_diagnostic() {
+        let now = 1_000_000;
+        let empty = DaemonDiag {
+            oauth: None,
+            oauth_backoff_until_ms: 0,
+            oauth_blocked: false,
+            discord: None,
+            config_error: None,
+            buckets: Vec::new(),
+        };
+        assert_eq!(
+            format_diag(&empty, now),
+            [
+                "OAuth usage: never",
+                "Discord: no state yet",
+                "Config: loaded",
+                "Usage buckets: none known",
+            ]
+        );
+
+        let bucket = |label: &str, reset| DiagBucket {
+            label: label.into(),
+            used_percent: 42,
+            updated_at_ms: now - 30_000,
+            reset,
+        };
+        let failing = DaemonDiag {
+            oauth: Some((Err(OAuthFetchError::Unauthorized(None)), now - 412_000)),
+            oauth_backoff_until_ms: now + 188_000,
+            oauth_blocked: false,
+            discord: Some((DiscordState::Rejected, now - 5_000)),
+            config_error: Some(
+                r#"invalid type: string "D:\\private\"x", expected a sequence at line 3 column 20"#
+                    .into(),
+            ),
+            buckets: vec![
+                bucket("5h", ResetKind::Iso),
+                bucket("All", ResetKind::Text),
+                bucket("Fable", ResetKind::None),
+            ],
+        };
+        assert_eq!(
+            format_diag(&failing, now),
+            [
+                "OAuth usage: Unauthorized, 412 s ago, retry in 188 s",
+                "Discord: rejected, changed 5 s ago",
+                r#"Config: load error (invalid type: string "...", expected a sequence at line 3 column 20)"#,
+                "Usage bucket 5h: 42%, updated 30 s ago, reset ISO (OAuth)",
+                "Usage bucket All: 42%, updated 30 s ago, reset text (Desktop)",
+                "Usage bucket Fable: 42%, updated 30 s ago, reset none",
+            ]
+        );
+
+        // A successful fetch whose backoff has already passed shows no retry.
+        let ok = DaemonDiag {
+            oauth: Some((Ok(()), now - 1_000)),
+            oauth_backoff_until_ms: now - 1,
+            ..empty
+        };
+        assert_eq!(format_diag(&ok, now)[0], "OAuth usage: Ok, 1 s ago");
+
+        // A refused renewal waits for the credentials to change, not a timer.
+        let blocked = DaemonDiag {
+            oauth: Some((
+                Err(OAuthFetchError::NoToken(
+                    TokenError::Expired,
+                    RenewError::Status(400, OAuthErrorCode::InvalidGrant),
+                )),
+                now - 148_000,
+            )),
+            oauth_backoff_until_ms: now + 452_000,
+            oauth_blocked: true,
+            ..ok
+        };
+        assert_eq!(
+            format_diag(&blocked, now)[0],
+            "OAuth usage: NoToken (token expired; renewal refused: HTTP 400 invalid_grant), \
+             148 s ago, waiting for a new Claude Code sign-in"
+        );
+    }
+
+    #[test]
+    fn desktop_ui_ttl_bounds_scan_duty_cycle() {
+        assert_eq!(desktop_ui_ttl(0), 2_000);
+        assert_eq!(desktop_ui_ttl(10), 2_000);
+        assert_eq!(desktop_ui_ttl(223), 4_460);
+        assert_eq!(desktop_ui_ttl(1_000), 15_000);
+    }
+
+    #[test]
+    fn an_unreadable_config_pauses_publishing() {
+        let mut config = ClaudeConfig {
+            private_projects: vec!["secret".into()],
+            ..ClaudeConfig::default()
+        };
+        assert!(!apply_loaded_config(&mut config, Err("bad json".into())));
+        assert!(config.dnd);
+        assert_eq!(config.private_projects, ["secret"]);
+        // Readable again: its own settings apply, DND included.
+        assert!(apply_loaded_config(
+            &mut config,
+            Ok(ClaudeConfig::default())
+        ));
+        assert!(!config.dnd);
+    }
+
+    #[test]
+    fn classifies_bucket_resets() {
+        assert_eq!(reset_kind(None), ResetKind::None);
+        assert_eq!(
+            reset_kind(Some("2026-09-25T20:19:59+00:00")),
+            ResetKind::Iso
+        );
+        assert_eq!(reset_kind(Some("in 4 hr 33 min")), ResetKind::Text);
+        assert_eq!(reset_kind(Some("Tue 9:00 AM")), ResetKind::Text);
+    }
+
+    // Manual profiling on a real machine; prints timings, asserts nothing:
+    // cargo test --release --manifest-path src-tauri/Cargo.toml -- --ignored profile_detection_stages --nocapture
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn profile_detection_stages() {
+        use std::time::Instant;
+
+        fn time_ms<T>(f: impl FnOnce() -> T) -> (f64, T) {
+            let start = Instant::now();
+            let value = f();
+            (start.elapsed().as_secs_f64() * 1000.0, value)
+        }
+        // Prints the stats and returns the implied ms of work per second.
+        fn report(label: &str, samples: &[f64], per_second: f64) -> f64 {
+            let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+            let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
+            let max = samples.iter().copied().fold(0.0, f64::max);
+            let implied = avg * per_second;
+            println!(
+                "{label}: runs {}, avg {avg:.3} ms, min {min:.3} ms, max {max:.3} ms, \
+                 at {per_second}/s -> {implied:.3} ms/s",
+                samples.len()
+            );
+            implied
+        }
+
+        // 1. Toolhelp process list alone.
+        let samples: Vec<f64> = (0..40).map(|_| time_ms(list_process_entries).0).collect();
+        report("1 list_process_entries", &samples, 1.0);
+
+        // 2. Claude process scan with one persistent cache.
+        let mut cache = ProcessCache::new();
+        let (cold, snapshots) = time_ms(|| scan_claude_processes(&mut cache));
+        println!(
+            "2 scan_claude_processes cold: {cold:.3} ms, snapshots {}",
+            snapshots.len()
+        );
+        let mut snapshots = snapshots;
+        let samples: Vec<f64> = (0..40)
+            .map(|_| {
+                let (ms, found) = time_ms(|| scan_claude_processes(&mut cache));
+                snapshots = found;
+                ms
+            })
+            .collect();
+        println!(
+            "2 scan_claude_processes warm snapshots: {}",
+            snapshots.len()
+        );
+        let scan = report("2 scan_claude_processes warm", &samples, 1.0);
+        let desktop_pids: Vec<u32> = snapshots
+            .iter()
+            .filter(|process| is_desktop_process(process))
+            .map(|process| process.process_id)
+            .collect();
+
+        // 3. Session log candidate listing alone.
+        let root = claude_dir().join("projects");
+        let mut candidates = 0;
+        let samples: Vec<f64> = (0..10)
+            .map(|_| {
+                let (ms, found) = time_ms(|| collect_jsonl_candidates(&root, 24 * 60 * 60 * 1000));
+                candidates = found.len();
+                ms
+            })
+            .collect();
+        println!("3 collect_jsonl_candidates candidates: {candidates}");
+        report("3 collect_jsonl_candidates", &samples, 1.0);
+
+        // 4. Full session read with one persistent prompt cache.
+        let mut prompts = PromptCache::new();
+        let (cold, session) = time_ms(|| read_session_info(&mut prompts));
+        println!(
+            "4 read_session_info cold: {cold:.3} ms, session found {}",
+            session.is_some()
+        );
+        let samples: Vec<f64> = (0..10)
+            .map(|_| time_ms(|| read_session_info(&mut prompts)).0)
+            .collect();
+        let session = report("4 read_session_info warm", &samples, 1.0);
+
+        // 5. Desktop config + UI Automation read.
+        let desktop = if desktop_pids.is_empty() {
+            println!("5 read_desktop_info: skipped, no Desktop process running");
+            0.0
+        } else {
+            let samples: Vec<f64> = (0..5)
+                .map(|_| time_ms(|| read_desktop_info(&desktop_pids, None)).0)
+                .collect();
+            let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+            let per_second = 1000.0 / desktop_ui_ttl(avg as u64) as f64;
+            report("5 read_desktop_info", &samples, per_second)
+        };
+
+        // Stage 1 runs inside stage 2 and stage 3 inside stage 4, so they are
+        // left out of the sum to avoid counting them twice.
+        let total = scan + session + desktop;
+        println!(
+            "Total (stages 2+4+5): {total:.3} ms/s = {:.3} % of one core",
+            total / 10.0
+        );
+        println!("{}", diagnostic_report());
     }
 }

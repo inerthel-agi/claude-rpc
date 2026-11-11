@@ -27,6 +27,7 @@ jobs:
 
       - run: node --check tauri-ui/main.js
       - run: node --check tauri-ui/tray.js
+      - run: node --check tauri-ui/shared.js
 
       - run: cargo fmt --check
         working-directory: src-tauri

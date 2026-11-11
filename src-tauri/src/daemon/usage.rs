@@ -6,7 +6,8 @@ use std::fs;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use super::{
-    app_dir, claude_dir, normalize_ui_label, now_ms, truncate, write_status, StateMachine,
+    app_dir, claude_dir, diag, modified_ms, normalize_ui_label, now_ms, record_limit_buckets,
+    record_oauth_outcome, truncate, write_status, StateMachine,
 };
 use crate::config::ClaudeConfig;
 
@@ -102,6 +103,8 @@ pub(crate) fn parse_usage_button(value: &str) -> Vec<UsageLimitEntry> {
         return Vec::new();
     };
     let segments = rest.split(',').map(str::trim).collect::<Vec<_>>();
+    // Same segments as `segments` (normalizing adds no comma), as displayed.
+    let original = value.split(',').collect::<Vec<_>>();
     let mut entries = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
         let (label, percent) = if let Some(percent) = segment.strip_suffix("% of 5-hour limit") {
@@ -120,10 +123,9 @@ pub(crate) fn parse_usage_button(value: &str) -> Vec<UsageLimitEntry> {
         let Ok(used_percent) = percent.trim().parse::<u32>() else {
             continue;
         };
-        let reset = segments
+        let reset = original
             .get(index + 1)
-            .and_then(|segment| segment.strip_prefix("resets "))
-            .map(|reset| reset.trim().to_string());
+            .and_then(|segment| reset_text(segment));
         entries.push(UsageLimitEntry {
             label: label.into(),
             used_percent: used_percent.min(100) as u8,
@@ -206,12 +208,18 @@ pub(crate) fn find_limit_reset(
         .iter()
         .take(usage_index)
         .skip(label_index + 1)
-        .find_map(|name| {
-            let normalized = normalize_ui_label(name);
-            normalized
-                .strip_prefix("resets ")
-                .map(|reset| reset.trim().to_string())
-        })
+        .find_map(|name| reset_text(name))
+}
+
+// "Resets Sun 4:00 AM" -> "Sun 4:00 AM": the prefix matches in any case, the
+// text is published as Desktop shows it.
+#[cfg(any(windows, test))]
+fn reset_text(value: &str) -> Option<String> {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    value
+        .get(..7)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("resets "))
+        .map(|_| value[7..].to_string())
 }
 
 pub(crate) fn limits_line(
@@ -299,6 +307,7 @@ pub(crate) fn current_limits(
         write_limits_cache(now, &machine.cached_limits);
         machine.limits_cache_written_at = now;
     }
+    record_limit_buckets(&machine.cached_limits);
 
     let mut fresh = fresh_limit_entries(&machine.cached_limits, now);
     if !has_5h {
@@ -385,17 +394,29 @@ pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> 
     match polled {
         Some(Ok(result)) => {
             machine.oauth_inflight = None;
-            return match result {
-                Ok(usage) => Some(usage),
-                Err(error) => {
-                    machine.oauth_backoff_until_ms = now + backoff_after(&error);
-                    None
+            machine.oauth_refused_mtime = None;
+            if let Err(error) = &result {
+                machine.oauth_backoff_until_ms = now + backoff_after(error);
+                // Block on the credentials the request used: a /login during
+                // the request leaves a newer file, which must not count as refused.
+                if is_refused_renewal(error) {
+                    machine.oauth_refused_mtime = Some(machine.oauth_attempt_mtime);
                 }
-            };
+            }
+            record_oauth_outcome(
+                result.as_ref().map(|_| ()).map_err(|error| *error),
+                now,
+                machine.oauth_backoff_until_ms,
+                machine.oauth_refused_mtime.is_some(),
+            );
+            return result.ok();
         }
         Some(Err(TryRecvError::Empty)) => return None,
         Some(Err(TryRecvError::Disconnected)) => machine.oauth_inflight = None,
         None => {}
+    }
+    if sign_in_still_refused(machine, now, credentials_modified_ms) {
+        return None;
     }
     if now < machine.oauth_backoff_until_ms {
         machine.pending_activity_refresh = false;
@@ -414,6 +435,7 @@ pub(crate) fn maybe_fetch_oauth_limits(machine: &mut StateMachine, now: u64) -> 
     machine.oauth_last_attempt_ms = now;
     machine.pending_activity_refresh = false;
     let (sender, receiver) = mpsc::channel();
+    machine.oauth_attempt_mtime = credentials_modified_ms();
     std::thread::spawn(move || {
         let _ = sender.send(fetch_oauth_usage());
     });
@@ -478,34 +500,191 @@ pub(crate) fn fresh_credits(machine: &StateMachine, now: u64) -> Option<UsageCre
         .filter(|credits| now.saturating_sub(credits.updated_at_ms) <= LIMITS_DISPLAY_TTL_MS)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum OAuthFetchError {
-    NoToken,
-    Unauthorized,
+    // Why the stored token was unusable, then why renewing it failed.
+    NoToken(TokenError, RenewError),
+    // Set when the renewal after a 401 failed.
+    Unauthorized(Option<RenewError>),
     Network,
     RateLimited,
     Parse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum TokenError {
+    NoFile,
+    BadJson,
+    NoEntry,
+    NoAccessToken,
+    Expired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum RenewError {
+    Read(TokenError),
+    NoRefreshToken,
+    Status(u16, OAuthErrorCode),
+    Transport,
+    BadResponse,
+    Changed,
+    WriteFailed,
+}
+
+// The standard OAuth `error` code of a refused token request. Only the code is
+// kept: the rest of the body is never stored or shown.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum OAuthErrorCode {
+    InvalidGrant,
+    InvalidRequest,
+    InvalidClient,
+    InvalidScope,
+    UnauthorizedClient,
+    UnsupportedGrantType,
+    Other,
+    Absent,
+}
+
+const OAUTH_ERROR_CODES: [(&str, OAuthErrorCode); 6] = [
+    ("invalid_grant", OAuthErrorCode::InvalidGrant),
+    ("invalid_request", OAuthErrorCode::InvalidRequest),
+    ("invalid_client", OAuthErrorCode::InvalidClient),
+    ("invalid_scope", OAuthErrorCode::InvalidScope),
+    ("unauthorized_client", OAuthErrorCode::UnauthorizedClient),
+    (
+        "unsupported_grant_type",
+        OAuthErrorCode::UnsupportedGrantType,
+    ),
+];
+
+fn oauth_error_code(error: Option<&str>) -> OAuthErrorCode {
+    let Some(error) = error else {
+        return OAuthErrorCode::Absent;
+    };
+    OAUTH_ERROR_CODES
+        .iter()
+        .find(|(name, _)| *name == error)
+        .map_or(OAuthErrorCode::Other, |(_, code)| *code)
+}
+
+// Diagnostic text: reasons only, never token values or file contents.
+impl std::fmt::Display for OAuthFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // The renewal re-reads the same file, so a read failure there
+            // repeats the first reason.
+            Self::NoToken(token, RenewError::Read(_)) => write!(f, "NoToken ({token})"),
+            Self::NoToken(token, renew) => write!(f, "NoToken ({token}; {renew})"),
+            Self::Unauthorized(None) => write!(f, "Unauthorized"),
+            Self::Unauthorized(Some(renew)) => write!(f, "Unauthorized ({renew})"),
+            other => write!(f, "{other:?}"),
+        }
+    }
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NoFile => "no credentials file",
+            Self::BadJson => "credentials not valid JSON",
+            Self::NoEntry => "no claudeAiOauth entry",
+            Self::NoAccessToken => "no accessToken",
+            Self::Expired => "token expired",
+        })
+    }
+}
+
+impl std::fmt::Display for RenewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(token) => write!(f, "renewal failed: {token}"),
+            Self::NoRefreshToken => write!(f, "renewal impossible: no refreshToken"),
+            Self::Status(code, error) => {
+                write!(f, "renewal refused: HTTP {code}")?;
+                match OAUTH_ERROR_CODES.iter().find(|(_, known)| known == error) {
+                    Some((name, _)) => write!(f, " {name}"),
+                    None => Ok(()),
+                }
+            }
+            Self::Transport => write!(f, "renewal failed: network error"),
+            Self::BadResponse => write!(f, "renewal failed: unusable response"),
+            Self::Changed => write!(f, "renewal discarded: refreshToken changed meanwhile"),
+            Self::WriteFailed => write!(f, "renewal failed: credentials not written"),
+        }
+    }
 }
 
 // How long to wait before the next usage request after a failure.
 fn backoff_after(error: &OAuthFetchError) -> u64 {
     match error {
         OAuthFetchError::RateLimited => OAUTH_USAGE_BACKOFF_MS,
-        OAuthFetchError::NoToken | OAuthFetchError::Unauthorized => OAUTH_SIGNED_OUT_BACKOFF_MS,
+        OAuthFetchError::NoToken(..) | OAuthFetchError::Unauthorized(_) => {
+            OAUTH_SIGNED_OUT_BACKOFF_MS
+        }
         OAuthFetchError::Network | OAuthFetchError::Parse => 0,
     }
 }
 
+// The token endpoint rejected the stored refresh token itself: sending it again
+// cannot succeed until Claude Code signs in and rewrites the credentials.
+fn is_refused_renewal(error: &OAuthFetchError) -> bool {
+    matches!(
+        error,
+        OAuthFetchError::NoToken(_, RenewError::Status(400 | 401, _))
+            | OAuthFetchError::Unauthorized(Some(RenewError::Status(400 | 401, _)))
+    )
+}
+
+// A missing file seen at both times counts as unchanged.
+fn renewal_still_refused(refused_mtime: Option<u64>, current_mtime: Option<u64>) -> bool {
+    refused_mtime == current_mtime
+}
+
+// How often a blocked usage request looks for a new Claude Code sign-in.
+const OAUTH_SIGN_IN_CHECK_MS: u64 = 5_000;
+
+// True while a refused renewal still blocks the usage request. A new sign-in
+// (/login) rewrites the credentials: the block, its backoff and the poll
+// interval are dropped so usage is fetched right away, not 10 minutes later.
+fn sign_in_still_refused(
+    machine: &mut StateMachine,
+    now: u64,
+    current_mtime: impl FnOnce() -> Option<u64>,
+) -> bool {
+    let Some(refused) = machine.oauth_refused_mtime else {
+        return false;
+    };
+    if now.saturating_sub(machine.oauth_sign_in_checked_ms) < OAUTH_SIGN_IN_CHECK_MS {
+        return true;
+    }
+    machine.oauth_sign_in_checked_ms = now;
+    if renewal_still_refused(refused, current_mtime()) {
+        return true;
+    }
+    machine.oauth_refused_mtime = None;
+    machine.oauth_backoff_until_ms = 0;
+    machine.oauth_last_attempt_ms = 0;
+    let mut diag = diag();
+    diag.oauth_blocked = false;
+    diag.oauth_backoff_until_ms = 0;
+    false
+}
+
+fn credentials_modified_ms() -> Option<u64> {
+    modified_ms(&claude_dir().join(".credentials.json"))
+}
+
 pub(crate) fn fetch_oauth_usage() -> Result<OAuthUsage, OAuthFetchError> {
-    let token = read_oauth_access_token()
-        .or_else(refresh_oauth_token)
-        .ok_or(OAuthFetchError::NoToken)?;
+    let token = read_oauth_access_token().or_else(|token| {
+        refresh_oauth_token().map_err(|renew| OAuthFetchError::NoToken(token, renew))
+    })?;
     let body = match request_oauth_usage(&token) {
         // Rejected before its stored expiry (revoked, or rotated by another
         // Claude Code): renew it once and retry, else the 5-hour bucket stays
         // gone until Claude Code is used again.
-        Err(OAuthFetchError::Unauthorized) => {
-            let token = refresh_oauth_token().ok_or(OAuthFetchError::Unauthorized)?;
+        Err(OAuthFetchError::Unauthorized(_)) => {
+            let token = refresh_oauth_token()
+                .map_err(|renew| OAuthFetchError::Unauthorized(Some(renew)))?;
             request_oauth_usage(&token)?
         }
         other => other?,
@@ -527,23 +706,35 @@ fn request_oauth_usage(token: &str) -> Result<String, OAuthFetchError> {
     match response {
         Ok(resp) => resp.into_string().map_err(|_| OAuthFetchError::Parse),
         Err(ureq::Error::Status(429, _)) => Err(OAuthFetchError::RateLimited),
-        Err(ureq::Error::Status(401, _)) => Err(OAuthFetchError::Unauthorized),
+        Err(ureq::Error::Status(401, _)) => Err(OAuthFetchError::Unauthorized(None)),
         Err(_) => Err(OAuthFetchError::Network),
     }
 }
 
-pub(crate) fn read_oauth_access_token() -> Option<String> {
-    let path = claude_dir().join(".credentials.json");
-    let raw = fs::read_to_string(&path).ok()?;
-    let value: Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()?;
-    let oauth = value.get("claudeAiOauth")?;
-    let token = oauth.get("accessToken").and_then(Value::as_str)?;
-    if let Some(expires_at) = oauth.get("expiresAt").and_then(Value::as_u64) {
-        if expires_at < now_ms() {
-            return None;
-        }
+fn read_credentials(path: &std::path::Path) -> Result<Value, TokenError> {
+    let raw = fs::read_to_string(path).map_err(|_| TokenError::NoFile)?;
+    serde_json::from_str(raw.trim_start_matches('\u{feff}')).map_err(|_| TokenError::BadJson)
+}
+
+pub(crate) fn read_oauth_access_token() -> Result<String, TokenError> {
+    let credentials = read_credentials(&claude_dir().join(".credentials.json"))?;
+    classify_credentials(&credentials, now_ms()).map(String::from)
+}
+
+// The stored access token if still usable at `now`. A missing or non-numeric
+// expiresAt counts as valid.
+fn classify_credentials(credentials: &Value, now: u64) -> Result<&str, TokenError> {
+    let oauth = credentials
+        .get("claudeAiOauth")
+        .ok_or(TokenError::NoEntry)?;
+    let token = oauth
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .ok_or(TokenError::NoAccessToken)?;
+    match oauth.get("expiresAt").and_then(Value::as_u64) {
+        Some(expires_at) if expires_at < now => Err(TokenError::Expired),
+        _ => Ok(token),
     }
-    Some(token.to_string())
 }
 
 // Claude Code's own OAuth client and token endpoint: the token belongs to it.
@@ -554,14 +745,18 @@ const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 // Desktop or on API-key agents leave it expired and the 5-hour bucket gone.
 // Renew it the way Claude Code does and write it back: a used refresh token
 // stops working, so Claude Code must get the new one.
-fn refresh_oauth_token() -> Option<String> {
+fn refresh_oauth_token() -> Result<String, RenewError> {
     let path = claude_dir().join(".credentials.json");
-    let read = || -> Option<Value> {
-        let raw = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok()
-    };
-    let oauth = read()?.get("claudeAiOauth")?.clone();
-    let refresh_token = oauth.get("refreshToken")?.as_str()?.to_string();
+    let read = || read_credentials(&path).map_err(RenewError::Read);
+    let oauth = read()?
+        .get("claudeAiOauth")
+        .cloned()
+        .ok_or(RenewError::Read(TokenError::NoEntry))?;
+    let refresh_token = oauth
+        .get("refreshToken")
+        .and_then(Value::as_str)
+        .ok_or(RenewError::NoRefreshToken)?
+        .to_string();
     let mut body = json!({
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -573,17 +768,30 @@ fn refresh_oauth_token() -> Option<String> {
             body["scope"] = scope.join(" ").into();
         }
     }
-    let response: Value = ureq::post(OAUTH_TOKEN_URL)
+    let response: Value = match ureq::post(OAUTH_TOKEN_URL)
         .timeout(std::time::Duration::from_secs(10))
         .set("User-Agent", "claude-rpc")
         .send_json(body)
-        .ok()?
-        .into_json()
-        .ok()?;
+    {
+        Ok(resp) => resp.into_json().map_err(|_| RenewError::BadResponse)?,
+        Err(ureq::Error::Status(code, response)) => {
+            let body: Option<Value> = response.into_json().ok();
+            let error = body.as_ref().and_then(|body| body.get("error"));
+            return Err(RenewError::Status(
+                code,
+                oauth_error_code(error.and_then(Value::as_str)),
+            ));
+        }
+        Err(_) => return Err(RenewError::Transport),
+    };
     // Re-read right before writing: Claude Code may have renewed it meanwhile.
     let mut credentials = read()?;
     let token = apply_refreshed_token(&mut credentials, &response, &refresh_token, now_ms())?;
-    write_status(&path, &credentials).then_some(token)
+    if write_status(&path, &credentials) {
+        Ok(token)
+    } else {
+        Err(RenewError::WriteFailed)
+    }
 }
 
 // Stores a refresh response in the credentials, keeping every other field.
@@ -593,13 +801,22 @@ fn apply_refreshed_token(
     response: &Value,
     used_refresh_token: &str,
     now: u64,
-) -> Option<String> {
-    let access_token = response.get("access_token")?.as_str()?;
-    let expires_in = response.get("expires_in")?.as_u64()?;
-    let oauth = credentials.get_mut("claudeAiOauth")?.as_object_mut()?;
-    if oauth.get("refreshToken").and_then(Value::as_str) != Some(used_refresh_token) {
-        return None;
-    }
+) -> Result<String, RenewError> {
+    let access_token = response
+        .get("access_token")
+        .and_then(Value::as_str)
+        .ok_or(RenewError::BadResponse)?;
+    let expires_in = response
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .ok_or(RenewError::BadResponse)?;
+    let oauth = credentials
+        .get_mut("claudeAiOauth")
+        .and_then(Value::as_object_mut)
+        .filter(|oauth| {
+            oauth.get("refreshToken").and_then(Value::as_str) == Some(used_refresh_token)
+        })
+        .ok_or(RenewError::Changed)?;
     let refresh_token = response
         .get("refresh_token")
         .and_then(Value::as_str)
@@ -607,7 +824,7 @@ fn apply_refreshed_token(
     oauth.insert("accessToken".into(), access_token.into());
     oauth.insert("refreshToken".into(), refresh_token.into());
     oauth.insert("expiresAt".into(), (now + expires_in * 1_000).into());
-    Some(access_token.to_string())
+    Ok(access_token.to_string())
 }
 
 pub(crate) fn parse_oauth_usage_response(body: &Value) -> Vec<UsageLimitEntry> {
@@ -876,6 +1093,7 @@ mod tests {
             (limits[1].label.as_str(), limits[1].used_percent),
             ("All", 3)
         );
+        assert_eq!(limits[1].reset.as_deref(), Some("Sun 4:00 AM"));
 
         // Popover closed: only the composer button is on screen.
         let limits = parse_usage_limits(&[
@@ -898,18 +1116,21 @@ mod tests {
                 limits[0].used_percent,
                 limits[0].reset.as_deref()
             ),
-            ("All", 17, Some("sun 4:00 am"))
+            ("All", 17, Some("Sun 4:00 AM"))
         );
     }
 
     #[test]
     fn backs_off_when_signed_out() {
         assert_eq!(
-            backoff_after(&OAuthFetchError::Unauthorized),
+            backoff_after(&OAuthFetchError::Unauthorized(None)),
             OAUTH_SIGNED_OUT_BACKOFF_MS
         );
         assert_eq!(
-            backoff_after(&OAuthFetchError::NoToken),
+            backoff_after(&OAuthFetchError::NoToken(
+                TokenError::Expired,
+                RenewError::Status(400, OAuthErrorCode::InvalidGrant)
+            )),
             OAUTH_SIGNED_OUT_BACKOFF_MS
         );
         assert_eq!(
@@ -918,6 +1139,96 @@ mod tests {
         );
         // A network blip retries at the normal cadence.
         assert_eq!(backoff_after(&OAuthFetchError::Network), 0);
+    }
+
+    #[test]
+    fn reads_oauth_error_codes() {
+        assert_eq!(
+            oauth_error_code(Some("invalid_grant")),
+            OAuthErrorCode::InvalidGrant
+        );
+        assert_eq!(
+            oauth_error_code(Some("unsupported_grant_type")),
+            OAuthErrorCode::UnsupportedGrantType
+        );
+        assert_eq!(
+            oauth_error_code(Some("Invalid_Grant")),
+            OAuthErrorCode::Other
+        );
+        assert_eq!(oauth_error_code(None), OAuthErrorCode::Absent);
+    }
+
+    #[test]
+    fn blocks_the_credentials_the_refused_request_used() {
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(Err(OAuthFetchError::NoToken(
+                TokenError::Expired,
+                RenewError::Status(400, OAuthErrorCode::InvalidGrant),
+            )))
+            .unwrap();
+        // The file was rewritten (mtime 6) while the request with mtime 5 ran.
+        let mut machine = StateMachine {
+            oauth_inflight: Some(receiver),
+            oauth_attempt_mtime: Some(5),
+            ..StateMachine::default()
+        };
+        assert!(maybe_fetch_oauth_limits(&mut machine, 1_000).is_none());
+        assert_eq!(machine.oauth_refused_mtime, Some(Some(5)));
+        assert!(!sign_in_still_refused(&mut machine, 10_000, || Some(6)));
+    }
+
+    #[test]
+    fn a_new_sign_in_lifts_the_block_at_once() {
+        let unused = || -> Option<u64> { panic!("credentials checked too often") };
+        let mut machine = StateMachine::default();
+        assert!(!sign_in_still_refused(&mut machine, 10_000, unused));
+
+        machine.oauth_refused_mtime = Some(Some(5));
+        machine.oauth_backoff_until_ms = u64::MAX;
+        machine.oauth_last_attempt_ms = 9_000;
+        // Same credentials: still refused, then not looked at again for 5 s.
+        assert!(sign_in_still_refused(&mut machine, 10_000, || Some(5)));
+        assert!(sign_in_still_refused(&mut machine, 14_999, unused));
+        // Rewritten by /login: unblocked, with no backoff or interval left.
+        assert!(!sign_in_still_refused(&mut machine, 15_000, || Some(6)));
+        assert_eq!(machine.oauth_refused_mtime, None);
+        assert_eq!(machine.oauth_backoff_until_ms, 0);
+        assert_eq!(machine.oauth_last_attempt_ms, 0);
+    }
+
+    #[test]
+    fn blocks_only_refused_renewals() {
+        let status = |code| RenewError::Status(code, OAuthErrorCode::Absent);
+        let no_token = |renew| OAuthFetchError::NoToken(TokenError::Expired, renew);
+        let unauthorized = |renew| OAuthFetchError::Unauthorized(Some(renew));
+        for refused in [
+            no_token(status(400)),
+            no_token(status(401)),
+            unauthorized(status(400)),
+            unauthorized(status(401)),
+        ] {
+            assert!(is_refused_renewal(&refused), "{refused:?}");
+        }
+        for retried in [
+            no_token(status(429)),
+            no_token(status(500)),
+            no_token(RenewError::Transport),
+            no_token(RenewError::BadResponse),
+            no_token(RenewError::NoRefreshToken),
+            unauthorized(status(500)),
+            OAuthFetchError::Unauthorized(None),
+            OAuthFetchError::RateLimited,
+            OAuthFetchError::Network,
+        ] {
+            assert!(!is_refused_renewal(&retried), "{retried:?}");
+        }
+
+        assert!(renewal_still_refused(Some(5), Some(5)));
+        assert!(renewal_still_refused(None, None));
+        assert!(!renewal_still_refused(Some(5), Some(6)));
+        assert!(!renewal_still_refused(Some(5), None));
+        assert!(!renewal_still_refused(None, Some(5)));
     }
 
     #[test]
@@ -970,7 +1281,7 @@ mod tests {
         });
         assert_eq!(
             apply_refreshed_token(&mut credentials, &response, "old-refresh", 1_000),
-            Some("new-access".into())
+            Ok("new-access".into())
         );
         assert_eq!(
             credentials,
@@ -989,9 +1300,63 @@ mod tests {
         let before = credentials.clone();
         assert_eq!(
             apply_refreshed_token(&mut credentials, &response, "old-refresh", 1_000),
-            None
+            Err(RenewError::Changed)
         );
         assert_eq!(credentials, before);
+    }
+
+    #[test]
+    fn classifies_stored_oauth_token() {
+        let creds = |oauth: Value| json!({ "claudeAiOauth": oauth });
+        let now = 1_000;
+        assert_eq!(
+            classify_credentials(&creds(json!({"accessToken": "a", "expiresAt": 2_000})), now),
+            Ok("a")
+        );
+        assert_eq!(
+            classify_credentials(&creds(json!({"accessToken": "a", "expiresAt": 999})), now),
+            Err(TokenError::Expired)
+        );
+        assert_eq!(
+            classify_credentials(&json!({"mcpOAuth": {}}), now),
+            Err(TokenError::NoEntry)
+        );
+        assert_eq!(
+            classify_credentials(&creds(json!({"refreshToken": "r"})), now),
+            Err(TokenError::NoAccessToken)
+        );
+        assert_eq!(
+            classify_credentials(&creds(json!({"accessToken": "a"})), now),
+            Ok("a")
+        );
+    }
+
+    #[test]
+    fn describes_oauth_failures() {
+        let no_token = |token, renew| OAuthFetchError::NoToken(token, renew).to_string();
+        assert_eq!(
+            no_token(
+                TokenError::Expired,
+                RenewError::Status(400, OAuthErrorCode::InvalidGrant)
+            ),
+            "NoToken (token expired; renewal refused: HTTP 400 invalid_grant)"
+        );
+        assert_eq!(
+            no_token(
+                TokenError::Expired,
+                RenewError::Status(400, OAuthErrorCode::Other)
+            ),
+            "NoToken (token expired; renewal refused: HTTP 400)"
+        );
+        assert_eq!(
+            no_token(TokenError::NoEntry, RenewError::Read(TokenError::NoEntry)),
+            "NoToken (no claudeAiOauth entry)"
+        );
+        assert_eq!(
+            OAuthFetchError::Unauthorized(Some(RenewError::Transport)).to_string(),
+            "Unauthorized (renewal failed: network error)"
+        );
+        assert_eq!(OAuthFetchError::Network.to_string(), "Network");
     }
 
     #[test]

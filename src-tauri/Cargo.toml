@@ -1,9 +1,9 @@
 [package]
 name = "claude_rpc_tray"
-version = "4.0.4"
+version = "4.0.5"
 description = "Claude RPC"
 authors = ["inerthel-agi"]
-license = "ISC"
+license = "MIT"
 edition = "2021"
 
 [build-dependencies]
