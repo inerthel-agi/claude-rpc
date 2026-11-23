@@ -25,8 +25,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateIcon, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
     GetCursorPos, RegisterClassW, RegisterWindowMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    HC_ACTION, HHOOK, HWND_MESSAGE, MSLLHOOKSTRUCT, WH_MOUSE_LL, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_MBUTTONUP, WM_RBUTTONUP, WM_XBUTTONUP, WNDCLASSW,
+    HC_ACTION, HHOOK, MSLLHOOKSTRUCT, WH_MOUSE_LL, WINDOW_STYLE, WM_APP, WM_CONTEXTMENU,
+    WM_LBUTTONUP, WM_MBUTTONUP, WM_RBUTTONUP, WM_XBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW,
 };
 
 const WM_TRAY: u32 = WM_APP + 7;
@@ -157,9 +157,11 @@ pub(crate) fn add_icon(
             ..Default::default()
         };
         RegisterClassW(&class);
-        // A message-only window: it only receives the icon's mouse events.
+        // A hidden top-level window that is never shown: it receives the icon's
+        // mouse events and the TaskbarCreated broadcast, which a message-only
+        // window would miss.
         let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
+            WS_EX_TOOLWINDOW,
             w!("ClaudeRpcTray"),
             PCWSTR::null(),
             WINDOW_STYLE(0),
@@ -167,7 +169,7 @@ pub(crate) fn add_icon(
             0,
             0,
             0,
-            Some(HWND_MESSAGE),
+            None,
             None,
             Some(instance.into()),
             None,
