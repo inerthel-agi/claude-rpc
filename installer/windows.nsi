@@ -74,7 +74,11 @@ Function .onInit
       StrCpy $1 $1 "" 1
       StrCpy $1 $1 -1
     ${EndIf}
-    StrCpy $INSTDIR $1
+    ; Only a folder that still exists: a renamed Windows profile leaves a path
+    ; that can no longer be created.
+    ${If} ${FileExists} "$1\*.*"
+      StrCpy $INSTDIR $1
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
@@ -96,8 +100,16 @@ Section "Install"
   ; Web view data of the Tauri builds (4.0.5 and older); nothing reads it any more.
   RMDir /r "$LOCALAPPDATA\${OLD_APP_ID}\EBWebView"
   RMDir "$LOCALAPPDATA\${OLD_APP_ID}"
+  ClearErrors
   SetOutPath "$INSTDIR"
+  ; A silent install would otherwise go on and register a version it did not copy.
+  SetOverwrite try
   File "/oname=${EXE}" "${SOURCE}"
+  ${If} ${Errors}
+    SetErrorLevel 2
+    Abort "Could not write $INSTDIR\${EXE}"
+  ${EndIf}
+  SetOverwrite on
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateShortcut "$SMPROGRAMS\${PRODUCT}.lnk" "$INSTDIR\${EXE}" "--settings"
   ; Lets Windows attribute the app's notifications to it.
