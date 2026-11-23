@@ -1,5 +1,10 @@
 # Changelog
 
+## v4.1.1 (2026-11-23)
+
+### Fixed
+- **Installer**: when the folder of an earlier install no longer existed (for example after the Windows user folder was renamed), the installer reported success without copying anything, while it recorded the new version and moved the Start menu shortcut to that missing folder. It now installs to `%LOCALAPPDATA%\Claude RPC` in that case, and stops with an error when the program cannot be written.
+
 ## v4.1.0 (2026-11-23)
 
 ### Changed

@@ -21,12 +21,12 @@ To build from source:
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_4.1.0_x64-setup.exe`: installer. It installs to `%LOCALAPPDATA%\Claude RPC` and replaces an earlier version in place.
+- `Claude.RPC_4.1.1_x64-setup.exe`: installer. It installs to `%LOCALAPPDATA%\Claude RPC` and replaces an earlier version in place.
 - `claude-rpc.exe`: portable executable.
 
 Updates:
 
-- v3.7.0 to v4.0.5 install v4.1.0 from the update item of their tray menu.
+- v3.7.0 to v4.0.5 install the current version from the update item of their tray menu.
 - From v4.1.0, the app checks GitHub releases. When a newer version exists, the tray menu and the settings show it, and **Download** opens its release page.
 - Versions before v3.7.0 cannot verify the current update signature. Install the new version manually.
 

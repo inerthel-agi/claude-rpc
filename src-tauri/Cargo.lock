@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "claude_rpc_tray"
-version = "4.1.0"
+version = "4.1.1"
 dependencies = [
  "i-slint-backend-testing",
  "notify-rust",
