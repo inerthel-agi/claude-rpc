@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.1.0 (unreleased)
+## v4.1.0 (2026-11-23)
 
 ### Changed
 - The settings window and the tray menu are drawn by [Slint](https://slint.dev)'s software renderer instead of a web view. Tauri and the Microsoft Edge WebView2 runtime are no longer used, and no `msedgewebview2.exe` process runs beside the app.
