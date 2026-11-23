@@ -13,9 +13,12 @@ pub fn link_url(name: &str) -> Option<&'static str> {
         "repo" => Some("https://github.com/inerthel-agi/claude-rpc"),
         "profile" => Some("https://github.com/inerthel-agi"),
         "releases" => Some("https://github.com/inerthel-agi/claude-rpc/releases"),
+        // Where a newer version is downloaded from.
+        "latest" => Some("https://github.com/inerthel-agi/claude-rpc/releases/latest"),
         "issues" => Some("https://github.com/inerthel-agi/claude-rpc/issues"),
         "desktop" => Some(DESKTOP_DOWNLOAD_URL),
         "code" => Some(CODE_SETUP_URL),
+        "slint" => Some("https://slint.dev"),
         _ => None,
     }
 }

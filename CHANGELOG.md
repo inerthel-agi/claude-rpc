@@ -1,5 +1,26 @@
 # Changelog
 
+## v4.1.0 (unreleased)
+
+### Changed
+- The settings window and the tray menu are drawn by [Slint](https://slint.dev)'s software renderer instead of a web view. Tauri and the Microsoft Edge WebView2 runtime are no longer used, and no `msedgewebview2.exe` process runs beside the app.
+- The settings window is created when you open it and freed when you close it. It uses the Windows title bar in the theme's colours, with an empty caption: the name and the logo stay in the sidebar, the taskbar and Alt+Tab.
+- The tray menu is a panel created when you open it and freed when you close it. It docks 12 px from the taskbar on any edge, also when the icon is in the hidden-icons flyout, and closes with `Escape` or a click anywhere else.
+- The six UI styles (Classic, Discord Bento, Claude Code TUI, Split Studio, Fluent Mica, Orbit) and the four themes (Dark, OLED, System, Light) are kept. The OLED palette keeps secondary text at #b0b0b0 or brighter, so it stays sharp without font hinting.
+- The interface uses the Geist font, embedded in the app (SIL Open Font License 1.1), instead of Inter. Claude Code TUI uses Cascadia Mono, and Fluent Mica and Orbit use Segoe UI Variable when Windows has it.
+- Updates: the app checks GitHub releases at startup and from **Check for updates**. A newer version shows in the tray menu and the settings, and **Download** opens its release page. Nothing is installed from the app any more. Installs of v3.7.0 to v4.0.5 still update themselves to this version.
+- The theme, the UI style, the hidden tray menu sections and the last settings page are stored in `%USERPROFILE%\.claude-rpc\ui.json`. The choices made in v4.0.x lived in the web view and are reset once.
+- `claude-rpc.exe --settings` opens the settings at launch. The installer's Start menu shortcut and its "Run" option use it.
+- Notifications are attributed to the identity `eu.inerthel.claude-rpc`, registered by the installer.
+- The installer comes from `installer/windows.nsi`. It keeps the install folder, Start menu shortcut and uninstall entry of earlier versions, upgrades them in place, and deletes the old web view data in `%LOCALAPPDATA%\eu.stealthylabs.claude-rpc`. Settings in `%USERPROFILE%\.claude-rpc` are kept.
+- `npm run build` runs `scripts/build.js`, which needs no npm packages. `package.json` no longer carries a version: it is read from `src-tauri/Cargo.toml`.
+- CI and releases use Rust 1.95.0, required by Slint 1.19.
+- The README carries the "Made with Slint" badge required by Slint's royalty-free license.
+
+### Removed
+- Hover tooltips in the settings and the tray menu.
+- Inserting a template variable at the caret: a variable is added at the end of the line you edited last.
+
 ## v4.0.5 (2026-11-11)
 
 ### Fixed

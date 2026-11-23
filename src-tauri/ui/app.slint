@@ -1,0 +1,2430 @@
+// Geist (SIL Open Font License 1.1, see fonts/OFL.txt), embedded in the app.
+import "fonts/Geist.ttf";
+import { Theme, L, Icon, Pressable, Reveal, Btn, Toggle, Chip, Field, Area, Segmented, Group, GroupTitle, Row, Block, Meter, Spark, PlanPill } from "widgets.slint";
+
+export { Theme, L }
+
+export struct Limit {
+    name: string,
+    // "42%", or "—" when Claude has not reported it
+    figure: string,
+    // 0..1
+    percent: float,
+    // 0 fine, 1 high, 2 critical, 3 not reported
+    level: int,
+    reset-in: string,
+    reset-at: string,
+    // Shows the 24-hour chart under it (5-hour session)
+    chart: bool,
+}
+
+// Everything the settings window shows or edits; main.rs fills and reads it.
+export global App {
+    // Status
+    in property <bool> client-on;
+    in property <string> client-label;
+    in property <string> discord-user;
+    in property <string> plan;
+    in property <[Limit]> limits;
+    in property <bool> has-5h: true;
+    in property <string> spark-line;
+    in property <string> spark-area;
+    in property <string> spark-peak;
+    in property <bool> credits-shown;
+    in property <string> credits-value;
+    in property <string> credits-of;
+    // 0..1, negative when there is no cap to compare with
+    in property <float> credits-percent: -1;
+    in property <int> credits-level;
+    in property <string> credits-note;
+    // Discord preview
+    in property <bool> pv-off;
+    in property <string> pv-activity;
+    in property <string> pv-primary;
+    in property <string> pv-secondary;
+    in property <string> pv-tertiary;
+    in property <string> pv-elapsed;
+    in property <[string]> pv-buttons;
+    // Settings (config.json)
+    in-out property <string> mode: "playing";
+    in-out property <bool> dnd;
+    in-out property <bool> show-provider;
+    in-out property <bool> show-plan;
+    in-out property <bool> show-effort;
+    in-out property <bool> show-sessions;
+    in-out property <bool> show-session-name;
+    in-out property <bool> show-branch;
+    in-out property <bool> model-icon;
+    in-out property <bool> show-limits;
+    in-out property <bool> show-limit-5h;
+    in-out property <bool> show-limit-all;
+    in-out property <bool> show-limit-fable;
+    in-out property <string> details-template;
+    in-out property <string> state-template;
+    in-out property <bool> alert-80;
+    in-out property <bool> alert-95;
+    in-out property <bool> alert-reset;
+    in-out property <bool> hide-in-chat;
+    in-out property <string> private-projects;
+    in-out property <string> label0;
+    in-out property <string> url0;
+    in-out property <string> label1;
+    in-out property <string> url1;
+    in-out property <string> language: "auto";
+    in property <string> error0;
+    in property <string> error1;
+    // General
+    in-out property <bool> startup-enabled;
+    in property <[bool]> tray-shown;
+    in property <string> version;
+    in property <string> update-version;
+    in property <string> update-status;
+    in property <bool> checking;
+    in property <bool> refreshing;
+    in property <bool> diagnostic-copied;
+    in property <string> diagnostic-text;
+    in property <bool> whats-new;
+    in property <string> message;
+    // 0 progress, 1 saved, 2 error
+    in property <int> message-kind;
+    callback changed();
+    callback set-theme(string);
+    callback set-design(string);
+    callback toggle-startup();
+    callback toggle-tray(int);
+    callback refresh-limits();
+    callback check-update();
+    callback copy-diagnostic();
+    callback dismiss-whats-new();
+    callback open-link(string);
+    callback page-changed(int);
+    callback close();
+}
+
+component Heading inherits VerticalLayout {
+    in property <string> title;
+    in property <string> sub;
+    padding-bottom: 18px;
+    spacing: 2px;
+    HorizontalLayout {
+        alignment: start;
+        if Theme.tui: Text {
+            text: "> ";
+            color: Theme.accent;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.tui ? 18px : Theme.orbit ? 22px : 20px;
+            font-weight: Theme.tui ? 700 : Theme.orbit ? 500 : 600;
+        }
+    }
+
+    if root.sub != "": Text {
+        text: root.sub;
+        color: Theme.muted;
+        font-size: 14px;
+        wrap: word-wrap;
+    }
+}
+
+// One usage gauge: name, percent, bar, reset.
+component Gauge inherits VerticalLayout {
+    in property <Limit> limit;
+    spacing: 7px;
+    HorizontalLayout {
+        spacing: 5px;
+        Text {
+            text: root.limit.name;
+            color: Theme.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.limit.figure;
+            color: root.limit.level == 3 ? Theme.muted : Theme.text;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        if root.limit.level != 3: Text {
+            text: L.t("used", "utilisés");
+            color: Theme.muted;
+            font-size: 12.5px;
+            vertical-alignment: center;
+        }
+    }
+
+    Meter {
+        percent: root.limit.percent;
+        level: root.limit.level;
+        label: root.limit.name;
+        value: root.limit.figure;
+    }
+
+    if root.limit.reset-in != "": HorizontalLayout {
+        Text {
+            text: root.limit.reset-in;
+            color: Theme.muted;
+            font-size: 12.5px;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+
+        Text {
+            text: root.limit.reset-at;
+            color: Theme.muted;
+            font-size: 12.5px;
+            horizontal-alignment: right;
+        }
+    }
+}
+
+component Notice inherits Group {
+    in property <string> title;
+    in property <string> text;
+    in property <string> icon;
+    in property <brush> tint: Theme.muted;
+    HorizontalLayout {
+        padding: 12px;
+        padding-left: 14px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                size: 16px;
+                tint: root.tint;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            if root.title != "": Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 13.5px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.text;
+                color: Theme.muted;
+                font-size: 13.5px;
+                wrap: word-wrap;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            @children
+        }
+    }
+}
+
+// The highlight of the current item is drawn by the sidebar, so it can slide between items.
+component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> current;
+    in property <bool> badge;
+    in property <bool> compact;
+    callback clicked();
+    height: 34px;
+    border-radius: Theme.orbit ? 17px : Theme.control-radius;
+    background: !current && press.hovered ? Theme.hover : transparent;
+    border-width: press.focused ? 1px : 0;
+    border-color: Theme.muted;
+    animate background { duration: Theme.fast; }
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 9px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                tint: root.current ? Theme.accent : press.hovered ? Theme.text : Theme.muted;
+            }
+        }
+
+        if !root.compact: Text {
+            text: root.text;
+            color: root.current && Theme.tui ? Theme.accent : root.current || press.hovered ? Theme.text : Theme.muted;
+            font-size: 14px;
+            font-weight: Theme.weight + (root.current && !Theme.mica ? 100 : 0);
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            animate color { duration: Theme.fast; }
+        }
+
+        if root.badge: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: Theme.accent;
+            }
+        }
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component ModeButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    callback clicked();
+    height: Theme.bento ? 48px : 38px;
+    border-radius: Theme.bento ? 12px : Theme.tui || Theme.mica ? Theme.control-radius : 10px;
+    border-width: checked && Theme.bento ? 2px : 1px;
+    border-color: checked && !Theme.orbit ? Theme.accent : press.focused ? Theme.text : Theme.bento ? transparent : Theme.line;
+    background: checked && Theme.mica ? Theme.accent : checked && Theme.orbit ? Theme.track : checked ? Theme.accent-weak : press.pressed ? Theme.press : press.hovered ? Theme.hover : Theme.card;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background, border-color { duration: Theme.fast; }
+    Text {
+        text: root.text;
+        color: root.checked && Theme.mica ? Theme.on-accent : root.checked && Theme.tui ? Theme.accent : root.checked || press.hovered ? Theme.text : Theme.muted;
+        font-size: 13.5px;
+        font-weight: Theme.weight + (root.checked ? 100 : 0);
+        animate color { duration: Theme.fast; }
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Token inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: 22px;
+    width: caption.preferred-width + 14px;
+    border-radius: Theme.tui || Theme.mica ? 3px : 6px;
+    border-width: 1px;
+    border-color: press.focused ? Theme.text : Theme.line;
+    background: press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background { duration: Theme.fast; }
+    caption := Text {
+        text: root.text;
+        color: press.hovered ? Theme.text : Theme.muted;
+        font-size: 11.5px;
+        font-family: Theme.mono;
+        animate color { duration: Theme.fast; }
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component DiscordCard inherits Rectangle {
+    border-radius: Theme.radius;
+    border-width: Theme.bento ? 0 : 1px;
+    border-color: Theme.line;
+    background: Theme.card;
+    clip: true;
+    if Theme.bento: Rectangle {
+        y: 0;
+        height: 40px;
+        background: @linear-gradient(135deg, #5865f2 0%, #9b59f6 52%, #eb459e 100%);
+    }
+    accessible-role: groupbox;
+    accessible-label: L.t("Live preview", "Aperçu en direct");
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            padding-bottom: Theme.bento ? 6px : 0;
+            if Theme.tui: Text {
+                text: "$ ";
+                color: Theme.accent;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            Text {
+                text: App.pv-activity;
+                color: Theme.bento ? #ffffff : App.pv-off ? Theme.muted : Theme.text;
+                font-size: 12px;
+                font-weight: 700;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: L.t("Live preview", "Aperçu en direct");
+                color: Theme.bento ? #ffffffe0 : Theme.muted;
+                font-size: 12px;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                width: 68px;
+                height: 68px;
+                Image {
+                    x: 0;
+                    y: 0;
+                    width: 64px;
+                    height: 64px;
+                    source: @image-url("logo.png");
+                    opacity: App.pv-off ? 0.4 : 1;
+                    animate opacity { duration: Theme.slow; }
+                }
+
+                if !App.pv-off: Rectangle {
+                    x: 46px;
+                    y: 46px;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 11px;
+                    border-width: 3px;
+                    border-color: Theme.card;
+                    background: Theme.ok;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                horizontal-stretch: 1;
+                Text {
+                    text: App.pv-primary;
+                    color: Theme.text;
+                    font-size: 14.5px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: App.pv-secondary;
+                    color: Theme.muted;
+                    font-size: 13.5px;
+                    overflow: elide;
+                }
+
+                if App.pv-tertiary != "": Text {
+                    text: App.pv-tertiary;
+                    color: Theme.muted;
+                    font-size: 13.5px;
+                    overflow: elide;
+                }
+                if App.pv-elapsed != "": Text {
+                    text: App.pv-elapsed;
+                    color: Theme.ok;
+                    font-size: 13.5px;
+                }
+            }
+        }
+
+        if App.pv-buttons.length > 0: VerticalLayout {
+            spacing: 6px;
+            for label in App.pv-buttons: Rectangle {
+                height: 32px;
+                border-radius: 6px;
+                background: Theme.input;
+                border-width: 1px;
+                border-color: Theme.line;
+                Text {
+                    text: label;
+                    color: Theme.text;
+                    font-size: 13.5px;
+                    font-weight: 500;
+                }
+            }
+        }
+    }
+}
+
+component PresencePage inherits VerticalLayout {
+    // 0 main line, 1 second line: the field a variable is added to.
+    property <int> target: 1;
+    function insert(token: string) {
+        if (root.target == 0) {
+            App.details-template = App.details-template == "" ? token : App.details-template + " " + token;
+            details.focus();
+        } else {
+            App.state-template = App.state-template == "" ? token : App.state-template + " " + token;
+            state.focus();
+        }
+        App.changed();
+    }
+
+    Heading {
+        title: L.t("Presence", "Présence");
+        sub: L.t("What your Discord profile shows while you use Claude.", "Ce que ton profil Discord affiche quand tu utilises Claude.");
+    }
+
+    if !Theme.split: DiscordCard { }
+
+    GroupTitle {
+        text: L.t("Activity type", "Type d’activité");
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        for mode in [
+            { key: "playing", text: L.t("Playing", "Joue") },
+            { key: "watching", text: L.t("Watching", "Regarde") },
+            { key: "listening", text: L.t("Listening", "Écoute") },
+            { key: "competing", text: L.t("Competing", "Compétition") },
+        ]: ModeButton {
+            text: mode.text;
+            checked: App.mode == mode.key;
+            clicked => {
+                App.mode = mode.key;
+                App.changed();
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Details", "Détails");
+    }
+
+    Group {
+        Block {
+            divider: false;
+            title: L.t("Show on profile", "Afficher sur le profil");
+            hint: L.t("Added after the model; session name and branch after the app. Plan needs Provider.", "Ajouté après le modèle ; nom de session et branche après l’app. Forfait demande Fournisseur.");
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Chip {
+                    text: L.t("Provider", "Fournisseur");
+                    checked <=> App.show-provider;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+
+                Chip {
+                    text: L.t("Plan", "Forfait");
+                    enabled: App.show-provider;
+                    checked <=> App.show-plan;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+
+                Chip {
+                    text: "Effort";
+                    checked <=> App.show-effort;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+
+                Chip {
+                    text: "Sessions";
+                    checked <=> App.show-sessions;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Chip {
+                    text: L.t("Session name", "Nom de session");
+                    checked <=> App.show-session-name;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+
+                Chip {
+                    text: L.t("Git branch", "Branche git");
+                    checked <=> App.show-branch;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+
+                Chip {
+                    text: L.t("Model icon", "Icône du modèle");
+                    checked <=> App.model-icon;
+                    clicked => {
+                        App.changed();
+                    }
+                }
+            }
+        }
+
+        Row {
+            title: L.t("Usage limits", "Limites d’usage");
+            hint: L.t("What Discord shows. The tray menu always shows all.", "Ce que Discord affiche. Le menu les montre toujours toutes.");
+            Toggle {
+                label: L.t("Usage limits", "Limites d’usage");
+                checked <=> App.show-limits;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-bottom: 12px;
+            spacing: 6px;
+            alignment: start;
+            if App.has-5h: Chip {
+                text: L.t("5-hour", "5 heures");
+                enabled: App.show-limits;
+                checked <=> App.show-limit-5h;
+                clicked => {
+                    App.changed();
+                }
+            }
+            Chip {
+                text: L.t("Weekly", "Semaine");
+                enabled: App.show-limits;
+                checked <=> App.show-limit-all;
+                clicked => {
+                    App.changed();
+                }
+            }
+
+            Chip {
+                text: "Fable";
+                enabled: App.show-limits;
+                checked <=> App.show-limit-fable;
+                clicked => {
+                    App.changed();
+                }
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Custom text", "Texte personnalisé");
+    }
+
+    Group {
+        VerticalLayout {
+            padding: 14px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    width: 110px;
+                    text: L.t("Main line", "Ligne principale");
+                    color: Theme.text;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                }
+
+                details := Field {
+                    label: L.t("Main line", "Ligne principale");
+                    placeholder: "Claude Desktop (Code)";
+                    text <=> App.details-template;
+                    edited => {
+                        App.changed();
+                    }
+                    changed focused => {
+                        if (self.focused) {
+                            root.target = 0;
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    width: 110px;
+                    text: L.t("Second line", "Deuxième ligne");
+                    color: Theme.text;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                }
+
+                state := Field {
+                    label: L.t("Second line", "Deuxième ligne");
+                    placeholder: "{model} | {plan} | {limits}";
+                    text <=> App.state-template;
+                    edited => {
+                        App.changed();
+                    }
+                    changed focused => {
+                        if (self.focused) {
+                            root.target = 1;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: L.t("Leave empty for the default text. Click a variable to add it to the line you edited last.", "Laisse vide pour le texte par défaut. Clique sur une variable pour l’ajouter à la ligne modifiée en dernier.");
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            for line in [
+                ["{model}", "{effort}", "{plan}", "{provider}", "{limits}", "{client}"],
+                ["{limit5h}", "{limitWeekly}", "{limitFable}", "{reset5h}", "{resetWeekly}"],
+                ["{sessions}", "{project}", "{session}", "{branch}", "{mode}"],
+            ]: HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                for token in line: Token {
+                    text: token;
+                    clicked => {
+                        root.insert(token);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component UsagePage inherits VerticalLayout {
+    HorizontalLayout {
+        Heading {
+            title: "Usage";
+            sub: L.t("Your Claude limits, read from your account.", "Tes limites Claude, lues depuis ton compte.");
+        }
+
+        VerticalLayout {
+            alignment: start;
+            padding-top: 4px;
+            Btn {
+                text: App.refreshing ? L.t("Refreshing…", "Actualisation…") : L.t("Refresh", "Actualiser");
+                enabled: !App.refreshing;
+                clicked => {
+                    App.refresh-limits();
+                }
+            }
+        }
+    }
+
+    Group {
+        VerticalLayout {
+            padding: 16px;
+            spacing: 18px;
+            if App.plan != "": HorizontalLayout {
+                alignment: start;
+                PlanPill {
+                    text: App.plan;
+                }
+            }
+            for limit in App.limits: VerticalLayout {
+                spacing: 12px;
+                Gauge {
+                    limit: limit;
+                }
+
+                if limit.chart && App.spark-line != "": VerticalLayout {
+                    spacing: 4px;
+                    HorizontalLayout {
+                        Text {
+                            text: L.t("Last 24 h", "24 dernières heures");
+                            color: Theme.muted;
+                            font-size: 12.5px;
+                            horizontal-stretch: 1;
+                        }
+
+                        Text {
+                            text: App.spark-peak;
+                            color: Theme.muted;
+                            font-size: 12.5px;
+                        }
+                    }
+
+                    Spark {
+                        height: 64px;
+                        line: App.spark-line;
+                        area: App.spark-area;
+                    }
+                }
+            }
+            if App.limits.length == 0: Text {
+                text: L.t("No usage yet. It appears once Claude reports it.", "Pas encore d’usage. Il s’affiche dès que Claude le transmet.");
+                color: Theme.muted;
+                font-size: 13.5px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    if App.credits-shown: VerticalLayout {
+        GroupTitle {
+            text: L.t("Usage credits", "Crédits d’usage");
+        }
+
+        Group {
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    Text {
+                        text: L.t("Spent", "Dépensé");
+                        color: Theme.text;
+                        font-size: 14px;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: App.credits-value;
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: App.credits-of;
+                        color: Theme.muted;
+                        font-size: 12.5px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if App.credits-percent >= 0: Meter {
+                    percent: App.credits-percent;
+                    level: App.credits-level;
+                    label: L.t("Usage credits", "Crédits d’usage");
+                    value: App.credits-value;
+                }
+                Text {
+                    text: App.credits-note;
+                    color: Theme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+    GroupTitle {
+        text: L.t("Alerts", "Alertes");
+    }
+
+    Group {
+        VerticalLayout {
+            padding: 14px;
+            padding-bottom: 6px;
+            Text {
+                text: App.has-5h ? L.t("Windows notifications for the 5-hour session.", "Notifications Windows pour la session de 5 heures.") : L.t("Windows notifications for the weekly limit.", "Notifications Windows pour la limite hebdomadaire.");
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+
+        Row {
+            divider: false;
+            title: L.t("At 80%", "À 80 %");
+            Toggle {
+                label: L.t("At 80%", "À 80 %");
+                checked <=> App.alert-80;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+
+        Row {
+            title: L.t("At 95%", "À 95 %");
+            Toggle {
+                label: L.t("At 95%", "À 95 %");
+                checked <=> App.alert-95;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+
+        Row {
+            title: L.t("When it resets", "À la remise à zéro");
+            Toggle {
+                label: L.t("When it resets", "À la remise à zéro");
+                checked <=> App.alert-reset;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+    }
+}
+
+component PrivacyPage inherits VerticalLayout {
+    Heading {
+        title: L.t("Privacy", "Confidentialité");
+        sub: L.t("Choose when nothing is shown on Discord.", "Choisis quand rien n’est affiché sur Discord.");
+    }
+
+    Group {
+        Row {
+            divider: false;
+            title: L.t("Do Not Disturb", "Ne pas déranger");
+            hint: L.t("Hide the activity. Detection keeps running.", "Masque l’activité. La détection continue.");
+            Toggle {
+                label: L.t("Do Not Disturb", "Ne pas déranger");
+                checked <=> App.dnd;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+
+        Row {
+            title: L.t("Hide in Chat tab", "Masquer l’onglet Chat");
+            hint: L.t("Show nothing while the Claude Desktop Chat tab is open.", "N’affiche rien quand l’onglet Chat de Claude Desktop est ouvert.");
+            Toggle {
+                label: L.t("Hide in Chat tab", "Masquer l’onglet Chat");
+                checked <=> App.hide-in-chat;
+                toggled => {
+                    App.changed();
+                }
+            }
+        }
+
+        Block {
+            title: L.t("Private projects", "Projets privés");
+            hint: L.t("Nothing is shown while you work in these folders. One per line: a folder name or a full path.", "Rien n’est affiché quand tu travailles dans ces dossiers. Un par ligne : un nom de dossier ou un chemin complet.");
+            Area {
+                label: L.t("Private projects", "Projets privés");
+                placeholder: "client-acme\nD:\\work\\secret";
+                family: Theme.mono;
+                text <=> App.private-projects;
+                edited => {
+                    App.changed();
+                }
+            }
+        }
+    }
+}
+
+component LinkRow inherits VerticalLayout {
+    in-out property <string> label <=> label-field.text;
+    in-out property <string> url <=> url-field.text;
+    in property <string> name;
+    in property <string> error;
+    in property <bool> divider: true;
+    if root.divider: Rectangle {
+        height: Theme.divider;
+        background: Theme.divider-color;
+    }
+    VerticalLayout {
+        padding: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 6px;
+        Text {
+            text: root.name;
+            color: Theme.text;
+            font-size: 14px;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            label-field := Field {
+                horizontal-stretch: 1;
+                enabled: App.mode == "watching";
+                label: root.name + " · " + L.t("Label", "Libellé");
+                placeholder: L.t("Label", "Libellé");
+                edited => {
+                    App.changed();
+                }
+            }
+
+            url-field := Field {
+                horizontal-stretch: 2;
+                enabled: App.mode == "watching";
+                invalid: root.error != "";
+                label: root.name + " · " + L.t("URL", "Adresse");
+                placeholder: "https://";
+                edited => {
+                    App.changed();
+                }
+            }
+        }
+
+        if root.error != "": Text {
+            text: root.error;
+            color: Theme.danger;
+            font-size: 13px;
+        }
+    }
+}
+
+component ButtonsPage inherits VerticalLayout {
+    function preset(label: string, url: string) {
+        if (App.label0 == "") {
+            App.label0 = label;
+            App.url0 = url;
+        } else {
+            App.label1 = label;
+            App.url1 = url;
+        }
+        App.changed();
+    }
+
+    Heading {
+        title: L.t("Profile buttons", "Boutons du profil");
+        sub: L.t("Up to two links on your Discord activity.", "Jusqu’à deux liens sur ton activité Discord.");
+    }
+
+    if App.mode != "watching": VerticalLayout {
+        padding-bottom: 10px;
+        Notice {
+            icon: "M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM7 11V7a5 5 0 0 1 10 0v4";
+            text: L.t("Discord shows buttons only in Watching mode.", "Discord n’affiche les boutons qu’en mode Regarde.");
+            Btn {
+                text: L.t("Switch to Watching", "Passer en Regarde");
+                clicked => {
+                    App.mode = "watching";
+                    App.changed();
+                }
+            }
+        }
+    }
+    Notice {
+        icon: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0M12 16v-4M12 8h.01";
+        tint: Theme.discord;
+        title: L.t("Discord Nitro only.", "Réservé à Discord Nitro.");
+        text: L.t("Without Nitro on your account, other people will not see these two buttons.", "Sans Nitro sur ton compte, les autres ne verront pas ces deux boutons.");
+    }
+
+    GroupTitle {
+        text: L.t("Links", "Liens");
+    }
+
+    Group {
+        LinkRow {
+            divider: false;
+            name: L.t("Button 1", "Bouton 1");
+            error: App.error0;
+            label <=> App.label0;
+            url <=> App.url0;
+        }
+
+        LinkRow {
+            name: L.t("Button 2", "Bouton 2");
+            error: App.error1;
+            label <=> App.label1;
+            url <=> App.url1;
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Quick fill", "Remplir");
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        Chip {
+            toggle: false;
+            enabled: App.mode == "watching";
+            text: "Claude";
+            clicked => {
+                root.preset("Claude", "https://claude.ai");
+            }
+        }
+
+        Chip {
+            toggle: false;
+            enabled: App.mode == "watching";
+            text: "Desktop";
+            clicked => {
+                root.preset("Claude Desktop", "https://claude.ai/download");
+            }
+        }
+
+        Chip {
+            toggle: false;
+            enabled: App.mode == "watching";
+            text: L.t("GitHub repo", "Dépôt GitHub");
+            clicked => {
+                root.preset("GitHub Repo", "https://github.com/inerthel-agi/claude-rpc");
+            }
+        }
+
+        Btn {
+            ghost: true;
+            enabled: App.mode == "watching";
+            text: L.t("Clear buttons", "Vider les boutons");
+            clicked => {
+                App.label0 = "";
+                App.url0 = "";
+                App.label1 = "";
+                App.url1 = "";
+                App.changed();
+            }
+        }
+    }
+}
+
+component GeneralPage inherits VerticalLayout {
+    // Same order as TRAY_SECTIONS in main.rs.
+    property <[[string]]> sections: [
+        [L.t("Session name", "Nom de session"), L.t("5-hour session", "Session de 5 h"), L.t("24-hour chart", "Graphique 24 h")],
+        [L.t("Weekly limits", "Limites hebdomadaires"), L.t("Usage credits", "Crédits d’usage"), "Pause"],
+        [L.t("Activity type", "Type d’activité"), L.t("Open Claude Desktop", "Ouvrir Claude Desktop"), L.t("Launch Claude Code", "Lancer Claude Code")],
+        [L.t("Updates", "Mises à jour"), L.t("Discord status", "État Discord")],
+    ];
+    Heading {
+        title: L.t("General", "Général");
+    }
+
+    Group {
+        Row {
+            divider: false;
+            title: L.t("Theme", "Thème");
+            Segmented {
+                options: [L.t("Dark", "Sombre"), "OLED", L.t("System", "Système"), L.t("Light", "Clair")];
+                item-width: 70px;
+                index: Theme.mode == "dark" ? 0 : Theme.mode == "oled" ? 1 : Theme.mode == "system" ? 2 : 3;
+                selected(i) => {
+                    App.set-theme(i == 0 ? "dark" : i == 1 ? "oled" : i == 2 ? "system" : "light");
+                }
+            }
+        }
+
+        Block {
+            title: L.t("UI style", "Style d’interface");
+            hint: L.t("Applies to this window and the tray menu.", "S’applique à cette fenêtre et au menu de la barre des tâches.");
+            for line in [
+                [{ key: "classic", text: L.t("Classic", "Classique") }, { key: "bento", text: "Discord Bento" }, { key: "tui", text: "Claude Code TUI" }],
+                [{ key: "split", text: "Split Studio" }, { key: "mica", text: "Fluent Mica" }, { key: "orbit", text: "Orbit" }],
+            ]: HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for style in line: Chip {
+                    text: style.text;
+                    toggle: false;
+                    checked: Theme.design == style.key;
+                    clicked => {
+                        App.set-design(style.key);
+                    }
+                }
+            }
+        }
+
+        Row {
+            title: L.t("Language", "Langue");
+            Segmented {
+                options: [L.t("Automatic", "Automatique"), "English", "Français"];
+                item-width: 92px;
+                index: App.language == "en" ? 1 : App.language == "fr" ? 2 : 0;
+                selected(i) => {
+                    App.language = i == 1 ? "en" : i == 2 ? "fr" : "auto";
+                    App.changed();
+                }
+            }
+        }
+
+        Row {
+            title: L.t("Start with Windows", "Lancer avec Windows");
+            hint: L.t("Claude RPC starts in the tray when you sign in.", "Claude RPC démarre dans la zone de notification à l’ouverture de session.");
+            Toggle {
+                label: L.t("Start with Windows", "Lancer avec Windows");
+                // Two-way, so the switch keeps following what main.rs reads back from the registry.
+                checked <=> App.startup-enabled;
+                toggled => {
+                    App.toggle-startup();
+                }
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Tray menu", "Menu de la barre des tâches");
+    }
+
+    Group {
+        Block {
+            divider: false;
+            title: L.t("Show in the tray menu", "Afficher dans le menu");
+            hint: L.t("Settings and Quit always stay.", "Réglages et Quitter restent toujours affichés.");
+            for line[r] in root.sections: HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for name[c] in line: Chip {
+                    text: name;
+                    // Drawn from the model: main.rs flips the entry and sends it back.
+                    toggle: false;
+                    checked: App.tray-shown[r * 3 + c];
+                    clicked => {
+                        App.toggle-tray(r * 3 + c);
+                    }
+                }
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Updates", "Mises à jour");
+    }
+
+    Group {
+        Row {
+            divider: false;
+            title: "Version " + App.version;
+            hint: App.update-status;
+            HorizontalLayout {
+                spacing: 8px;
+                if App.update-version != "": Btn {
+                    primary: true;
+                    text: L.t("Download", "Télécharger");
+                    clicked => {
+                        App.open-link("latest");
+                    }
+                }
+                Btn {
+                    text: App.checking ? L.t("Checking…", "Vérification…") : L.t("Check now", "Vérifier");
+                    enabled: !App.checking;
+                    clicked => {
+                        App.check-update();
+                    }
+                }
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Troubleshooting", "Dépannage");
+    }
+
+    Group {
+        Row {
+            divider: false;
+            title: L.t("Copy diagnostic", "Copier le diagnostic");
+            hint: App.diagnostic-copied ? L.t("Diagnostic copied", "Diagnostic copié") : L.t("Copies what the app detects, to paste in a bug report.", "Copie ce que l’app détecte, à coller dans un signalement de bug.");
+            Btn {
+                text: L.t("Copy diagnostic", "Copier le diagnostic");
+                clicked => {
+                    App.copy-diagnostic();
+                }
+            }
+        }
+
+        if App.diagnostic-text != "": VerticalLayout {
+            padding: 14px;
+            padding-top: 0;
+            Area {
+                label: "Diagnostic";
+                read-only: true;
+                family: Theme.mono;
+                text: App.diagnostic-text;
+            }
+        }
+    }
+}
+
+component LinkItem inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+    in property <bool> divider: true;
+    callback clicked();
+    min-height: 52px;
+    background: press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    border-radius: Theme.radius;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background { duration: Theme.fast; }
+    if root.divider: Rectangle {
+        y: 0;
+        height: Theme.divider;
+        background: Theme.divider-color;
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 14px;
+            }
+
+            Text {
+                text: root.hint;
+                color: Theme.muted;
+                font-size: 13px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: "M7 17L17 7M8 7h9v9";
+                tint: press.hovered ? Theme.text : Theme.muted;
+            }
+        }
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component AboutPage inherits VerticalLayout {
+    Heading {
+        title: L.t("About", "À propos");
+    }
+
+    Group {
+        HorizontalLayout {
+            padding: 16px;
+            spacing: 14px;
+            Image {
+                width: 52px;
+                height: 52px;
+                source: @image-url("logo.png");
+            }
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: "Claude RPC";
+                    color: Theme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: "Version " + App.version;
+                    color: Theme.muted;
+                    font-size: 13px;
+                }
+
+                Text {
+                    text: L.t("Shows your Claude activity on your Discord profile.", "Affiche ton activité Claude sur ton profil Discord.");
+                    color: Theme.muted;
+                    font-size: 13.5px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    GroupTitle {
+        text: L.t("Links", "Liens");
+    }
+
+    Group {
+        LinkItem {
+            divider: false;
+            title: L.t("Source code on GitHub", "Code source sur GitHub");
+            hint: "github.com/inerthel-agi/claude-rpc";
+            clicked => {
+                App.open-link("repo");
+            }
+        }
+
+        LinkItem {
+            title: L.t("Author’s GitHub profile", "Profil GitHub de l’auteur");
+            hint: "github.com/inerthel-agi";
+            clicked => {
+                App.open-link("profile");
+            }
+        }
+
+        LinkItem {
+            title: L.t("Release notes", "Notes de version");
+            hint: L.t("What changed in each version", "Ce qui change à chaque version");
+            clicked => {
+                App.open-link("releases");
+            }
+        }
+
+        LinkItem {
+            title: L.t("Report a problem", "Signaler un problème");
+            hint: L.t("Opens GitHub issues; paste the copied diagnostic", "Ouvre les issues GitHub ; colle le diagnostic copié");
+            clicked => {
+                App.open-link("issues");
+            }
+        }
+
+        // Slint's royalty-free license is met by the badge in the README; this row credits it here too.
+        LinkItem {
+            title: L.t("Made with Slint", "Fait avec Slint");
+            hint: L.t("The toolkit that draws this window", "La bibliothèque qui dessine cette fenêtre");
+            clicked => {
+                App.open-link("slint");
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding-top: 14px;
+        Text {
+            text: L.t("MIT License. Not affiliated with Anthropic or Discord.", "Licence MIT. Non affilié à Anthropic ni à Discord.");
+            color: Theme.muted;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component Banner inherits VerticalLayout {
+    in property <string> text;
+    in property <string> action;
+    in property <bool> primary;
+    callback clicked();
+    padding-bottom: 16px;
+    Rectangle {
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: root.primary ? Theme.accent : Theme.line;
+        background: root.primary ? Theme.accent-weak : Theme.card;
+        HorizontalLayout {
+            padding: 10px;
+            padding-left: 14px;
+            spacing: 12px;
+            Text {
+                text: root.text;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    primary: root.primary;
+                    text: root.action;
+                    clicked => {
+                        root.clicked();
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    in-out property <int> page;
+    // Width of the usage chart, so main.rs can draw it to size.
+    out property <length> chart-width: scroll.width - 88px;
+    // Puts the diagnostic on the clipboard; main.rs sets the text first.
+    public function copy-diagnostic() {
+        clipboard.select-all();
+        clipboard.copy();
+    }
+    title: "Claude RPC";
+    icon: @image-url("logo.png");
+    preferred-width: Theme.split ? 1080px : 790px;
+    preferred-height: 660px;
+    min-width: Theme.split ? 900px : 720px;
+    min-height: 480px;
+    background: Theme.bg;
+    default-font-family: Theme.font;
+    default-font-size: 14px;
+    default-font-weight: Theme.weight;
+    forward-focus: keys;
+    clipboard := TextInput {
+        visible: false;
+        width: 0;
+        height: 0;
+        single-line: false;
+        text: App.diagnostic-text;
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                App.close();
+                return accept;
+            }
+            return reject;
+        }
+        VerticalLayout {
+            HorizontalLayout {
+                Rectangle {
+                    // Split Studio keeps icons only: the right column takes the room.
+                    width: Theme.split ? 62px : 196px;
+                    background: Theme.panel;
+                    animate width {
+                        duration: Theme.slow;
+                        easing: ease-out;
+                    }
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: Theme.line;
+                    }
+
+                    VerticalLayout {
+                        padding: 10px;
+                        padding-top: 14px;
+                        padding-bottom: 14px;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-bottom: 16px;
+                            spacing: 10px;
+                            alignment: start;
+                            Image {
+                                width: 28px;
+                                height: 28px;
+                                source: @image-url("logo-small.png");
+                            }
+
+                            if !Theme.split: VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: "Claude RPC";
+                                    color: Theme.text;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 5px;
+                                    alignment: start;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: App.client-on ? Theme.ok : Theme.track;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: App.client-label;
+                                        color: Theme.muted;
+                                        font-size: 12.5px;
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: nav.preferred-height;
+                            // Slides behind the current item; items are 34px tall, 2px apart.
+                            Rectangle {
+                                y: root.page * 36px;
+                                height: 34px;
+                                border-radius: Theme.orbit ? 17px : Theme.control-radius;
+                                background: Theme.tui ? Theme.accent-weak : Theme.orbit ? Theme.track : Theme.hover;
+                                animate y {
+                                    duration: Theme.slow;
+                                    easing: ease-out;
+                                }
+                                // Windows 11's vertical accent pill on the current item.
+                                if Theme.mica: Rectangle {
+                                    x: 0;
+                                    width: 3px;
+                                    height: 16px;
+                                    border-radius: 1.5px;
+                                    background: Theme.accent;
+                                }
+                            }
+
+                            nav := VerticalLayout {
+                                spacing: 2px;
+                                for item[i] in [
+                                    { text: L.t("Presence", "Présence"), icon: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M8 7a4 4 0 1 0 8 0a4 4 0 1 0-8 0" },
+                                    { text: "Usage", icon: "M3 3v18h18M19 9l-5 5-4-4-3 3" },
+                                    { text: L.t("Privacy", "Confidentialité"), icon: "M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM7 11V7a5 5 0 0 1 10 0v4" },
+                                    { text: L.t("Profile buttons", "Boutons du profil"), icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" },
+                                    { text: L.t("General", "Général"), icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12" },
+                                    { text: L.t("About", "À propos"), icon: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0M12 16v-4M12 8h.01" },
+                                ]: NavItem {
+                                    text: item.text;
+                                    icon: item.icon;
+                                    compact: Theme.split;
+                                    current: root.page == i;
+                                    badge: i == 4 && App.update-version != "";
+                                    clicked => {
+                                        root.page = i;
+                                        scroll.content-y = 0;
+                                        App.page-changed(i);
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+
+                        if !Theme.split: VerticalLayout {
+                            padding-left: 10px;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: App.discord-user != "" ? Theme.ok : Theme.track;
+                                    }
+                                }
+
+                                Text {
+                                    text: App.discord-user != "" ? "Discord · " + App.discord-user : L.t("Discord not connected", "Discord non connecté");
+                                    color: Theme.muted;
+                                    font-size: 12.5px;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Text {
+                                text: "Claude RPC v" + App.version;
+                                color: Theme.muted;
+                                font-size: 12.5px;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    // Orbit: the page is lit by a soft glow from the top.
+                    if Theme.orbit: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: -self.height * 0.55;
+                        width: parent.width * 1.3;
+                        height: 420px;
+                        background: @radial-gradient(circle, (Theme.dark ? #4285f4 : #0b57d0).with-alpha(Theme.dark ? 0.2 : 0.08) 0%, transparent 70%);
+                    }
+                    scroll := Flickable {
+                        content-width: self.width;
+                        VerticalLayout {
+                            padding: 28px;
+                            padding-top: 22px;
+                            alignment: start;
+                            if App.update-version != "": Banner {
+                                primary: true;
+                                text: L.t("Update available: v", "Mise à jour disponible : v") + App.update-version;
+                                action: L.t("Download", "Télécharger");
+                                clicked => {
+                                    App.open-link("latest");
+                                }
+                            }
+                            if App.whats-new: Banner {
+                                text: L.t("Updated to v", "Mis à jour en v") + App.version;
+                                action: L.t("Got it", "Compris");
+                                clicked => {
+                                    App.dismiss-whats-new();
+                                }
+                            }
+                            if root.page == 0: Reveal {
+                                PresencePage { }
+                            }
+                            if root.page == 1: Reveal {
+                                UsagePage { }
+                            }
+                            if root.page == 2: Reveal {
+                                PrivacyPage { }
+                            }
+                            if root.page == 3: Reveal {
+                                ButtonsPage { }
+                            }
+                            if root.page == 4: Reveal {
+                                GeneralPage { }
+                            }
+                            if root.page == 5: Reveal {
+                                AboutPage { }
+                            }
+                        }
+                    }
+
+                    // Scroll position indicator; the wheel and touchpad do the scrolling.
+                    if scroll.content-height > scroll.height: Rectangle {
+                        x: parent.width - 8px;
+                        y: -scroll.content-y / scroll.content-height * scroll.height;
+                        width: 5px;
+                        height: scroll.height / scroll.content-height * scroll.height;
+                        border-radius: 2.5px;
+                        background: Theme.track;
+                    }
+                }
+
+                // Split Studio: the Discord preview and the usage gauges stay pinned here.
+                if Theme.split: Rectangle {
+                    width: 292px;
+                    background: Theme.panel;
+                    Rectangle {
+                        x: 0;
+                        width: 1px;
+                        background: Theme.line;
+                    }
+
+                    Flickable {
+                        x: 1px;
+                        width: parent.width - 1px;
+                        VerticalLayout {
+                            padding: 16px;
+                            padding-top: 22px;
+                            spacing: 12px;
+                            alignment: start;
+                            DiscordCard { }
+
+                            Group {
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 14px;
+                                    HorizontalLayout {
+                                        Text {
+                                            text: "Usage";
+                                            color: Theme.muted;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                            horizontal-stretch: 1;
+                                        }
+
+                                        if App.plan != "": PlanPill {
+                                            text: App.plan;
+                                        }
+                                    }
+
+                                    for limit in App.limits: Gauge {
+                                        limit: limit;
+                                    }
+                                    if App.limits.length == 0: Text {
+                                        text: L.t("No usage yet.", "Pas encore d’usage.");
+                                        color: Theme.muted;
+                                        font-size: 13px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 50px;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.line;
+                }
+
+                HorizontalLayout {
+                    padding-left: 28px;
+                    padding-right: 20px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            commands: "M20 6L9 17l-5-5";
+                            size: 14px;
+                            tint: App.message-kind == 1 ? Theme.ok : transparent;
+                            stroke-width: 2px;
+                        }
+                    }
+
+                    Text {
+                        text: App.message;
+                        color: App.message-kind == 2 ? Theme.danger : Theme.muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            text: L.t("Done", "Terminé");
+                            primary: true;
+                            clicked => {
+                                App.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Separator inherits VerticalLayout {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+    Rectangle {
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+// One row of the tray panel: icon, label, and an optional badge or arrow.
+component PanelItem inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> accent;
+    in property <bool> external;
+    in property <bool> danger;
+    callback clicked();
+    height: 34px;
+    border-radius: Theme.orbit ? 17px : Theme.tui || Theme.mica ? 4px : 10px;
+    background: press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    border-width: press.focused ? 1px : 0;
+    border-color: Theme.muted;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background { duration: Theme.fast; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                tint: root.danger && press.hovered ? Theme.danger : root.accent ? Theme.accent : Theme.muted;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: root.danger && press.hovered ? Theme.danger : root.accent ? Theme.accent : Theme.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            animate color { duration: Theme.fast; }
+        }
+
+        if root.external: VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: "M7 17L17 7M8 7h9v9";
+                size: 13px;
+            }
+        }
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component ModeIcon inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> checked;
+    callback clicked();
+    width: 30px;
+    height: 26px;
+    border-radius: 7px;
+    background: checked ? Theme.accent-weak : press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    border-width: press.focused ? 1px : 0;
+    border-color: Theme.muted;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background { duration: Theme.fast; }
+    Icon {
+        commands: root.icon;
+        tint: root.checked ? Theme.accent : press.hovered ? Theme.text : Theme.muted;
+    }
+
+    press := Pressable {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Opened by a right-click on the tray icon; panel.rs fills it, sizes it and places it.
+export component TrayPanel inherits Window {
+    in property <string> model-line;
+    in property <string> session-line;
+    in property <string> client-label;
+    in property <bool> client-on;
+    // Sections the user keeps, in the order of TRAY_SECTIONS in main.rs:
+    // session, usage, chart, limits, credits, pause, activity, desktop, code, update, footer.
+    in property <[bool]> show;
+    in property <bool> has-hero;
+    in property <Limit> hero;
+    in property <string> plan;
+    in property <string> alert;
+    // 1 above 80 %, 2 above 95 %
+    in property <int> alert-level;
+    in property <string> spark-line;
+    in property <string> spark-area;
+    in property <string> spark-peak;
+    in property <[Limit]> limits;
+    in property <string> credits;
+    in property <float> credits-percent: -1;
+    in property <int> credits-level;
+    in property <bool> paused;
+    in property <string> pause-state;
+    in property <string> mode: "playing";
+    in property <bool> desktop-installed;
+    in property <bool> code-installed;
+    in property <string> update-label;
+    in property <bool> update-ready;
+    in property <string> discord-pre;
+    in property <string> discord-user;
+    in property <string> discord-post;
+    out property <length> wanted-height: content.preferred-height;
+    callback toggle-pause();
+    callback pause(string);
+    callback set-mode(string);
+    callback open-desktop();
+    callback open-code();
+    callback open-settings();
+    callback update();
+    callback quit();
+    callback dismiss();
+    title: "Claude RPC menu";
+    no-frame: true;
+    always-on-top: true;
+    background: Theme.panel;
+    default-font-family: Theme.font;
+    default-font-size: 14px;
+    default-font-weight: Theme.weight;
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            return reject;
+        }
+        content := VerticalLayout {
+            padding: 6px;
+            alignment: start;
+            Reveal {
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 10px;
+                    spacing: 10px;
+                    Image {
+                        width: 30px;
+                        height: 30px;
+                        source: @image-url("logo-small.png");
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "Claude RPC";
+                                color: Theme.text;
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+
+                            Rectangle {
+                                height: 20px;
+                                width: pill.preferred-width;
+                                border-radius: 10px;
+                                background: root.client-on ? Theme.ok.with-alpha(0.14) : Theme.hover;
+                                pill := HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 5px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: root.client-on ? Theme.ok : Theme.muted;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.client-label;
+                                        color: root.client-on ? Theme.ok : Theme.muted;
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.model-line;
+                            color: Theme.muted;
+                            font-size: 12.5px;
+                            overflow: elide;
+                        }
+
+                        if root.show[0] && root.session-line != "": Text {
+                            text: root.session-line;
+                            color: Theme.muted;
+                            font-size: 12.5px;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                if root.show[1] || root.show[3] || root.show[4]: VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 2px;
+                    padding-bottom: 8px;
+                    spacing: 10px;
+                    if root.show[1] && root.has-hero: VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            Text {
+                                text: root.hero.name;
+                                color: Theme.muted;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+
+                            if root.plan != "": PlanPill {
+                                text: root.plan;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Text {
+                                text: root.hero.figure;
+                                color: Theme.text;
+                                font-size: 27px;
+                                font-weight: 600;
+                            }
+
+                            VerticalLayout {
+                                alignment: end;
+                                padding-bottom: 5px;
+                                Text {
+                                    text: L.t("used", "utilisés");
+                                    color: Theme.muted;
+                                    font-size: 13px;
+                                }
+                            }
+                        }
+
+                        Meter {
+                            big: true;
+                            percent: root.hero.percent;
+                            level: root.hero.level;
+                            label: root.hero.name;
+                            value: root.hero.figure;
+                        }
+
+                        if root.hero.reset-in != "": HorizontalLayout {
+                            Text {
+                                text: root.hero.reset-in;
+                                color: Theme.muted;
+                                font-size: 12.5px;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: root.hero.reset-at;
+                                color: Theme.muted;
+                                font-size: 12.5px;
+                            }
+                        }
+                        if root.alert != "": Rectangle {
+                            border-radius: 8px;
+                            background: (root.alert-level == 2 ? Theme.danger : Theme.warn).with-alpha(0.14);
+                            HorizontalLayout {
+                                padding: 7px;
+                                padding-left: 10px;
+                                spacing: 8px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        commands: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z";
+                                        size: 14px;
+                                        tint: root.alert-level == 2 ? Theme.danger : Theme.warn;
+                                        stroke-width: 1.8px;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.alert;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                        if root.show[2] && root.spark-line != "": VerticalLayout {
+                            spacing: 4px;
+                            HorizontalLayout {
+                                Text {
+                                    text: L.t("Last 24 h", "24 dernières heures");
+                                    color: Theme.muted;
+                                    font-size: 12.5px;
+                                    horizontal-stretch: 1;
+                                }
+
+                                Text {
+                                    text: root.spark-peak;
+                                    color: Theme.muted;
+                                    font-size: 12.5px;
+                                }
+                            }
+
+                            Spark {
+                                height: 34px;
+                                line: root.spark-line;
+                                area: root.spark-area;
+                            }
+                        }
+                    }
+                    if root.show[1] && !root.has-hero: Text {
+                        text: L.t("Usage appears once Claude reports it.", "L’usage s’affiche dès que Claude le transmet.");
+                        color: Theme.muted;
+                        font-size: 13.5px;
+                        wrap: word-wrap;
+                    }
+                    if root.show[3] && root.limits.length > 0: HorizontalLayout {
+                        spacing: 14px;
+                        for limit in root.limits: VerticalLayout {
+                            // The rows share the width equally, whatever their text.
+                            min-width: 0;
+                            preferred-width: 0;
+                            horizontal-stretch: 1;
+                            spacing: 6px;
+                            HorizontalLayout {
+                                Text {
+                                    text: limit.name;
+                                    color: Theme.muted;
+                                    font-size: 13px;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: limit.figure;
+                                    color: limit.level == 3 ? Theme.muted : Theme.text;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                }
+                            }
+
+                            Meter {
+                                percent: limit.percent;
+                                level: limit.level;
+                                label: limit.name;
+                                value: limit.figure;
+                            }
+
+                            if limit.reset-at != "": Text {
+                                text: limit.reset-at;
+                                color: Theme.muted;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    if root.show[4] && root.credits != "": VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            Text {
+                                text: L.t("Usage credits", "Crédits d’usage");
+                                color: Theme.muted;
+                                font-size: 13px;
+                                horizontal-stretch: 1;
+                            }
+
+                            Text {
+                                text: root.credits;
+                                color: Theme.text;
+                                font-size: 13px;
+                                font-weight: 600;
+                            }
+                        }
+
+                        if root.credits-percent >= 0: Meter {
+                            percent: root.credits-percent;
+                            level: root.credits-level;
+                            label: L.t("Usage credits", "Crédits d’usage");
+                            value: root.credits;
+                        }
+                    }
+                }
+                Separator { }
+
+                if root.show[5]: VerticalLayout {
+                    HorizontalLayout {
+                        height: 40px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                commands: "M7 4h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM15 4h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z";
+                                tint: root.paused ? Theme.accent : Theme.muted;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: L.t("Pause Discord presence", "Pause sur Discord");
+                                color: Theme.text;
+                                font-size: 14px;
+                                overflow: elide;
+                            }
+
+                            if root.paused: Text {
+                                text: root.pause-state;
+                                color: Theme.accent;
+                                font-size: 12px;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                label: L.t("Pause Discord presence", "Pause sur Discord");
+                                // Drawn from the saved state: panel.rs answers the click.
+                                passive: true;
+                                checked: root.paused;
+                                toggled => {
+                                    root.toggle-pause();
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 35px;
+                        padding-bottom: 6px;
+                        spacing: 4px;
+                        alignment: start;
+                        for option in [
+                            { text: "30 min", value: "30" },
+                            { text: "1 h", value: "60" },
+                            { text: L.t("Tomorrow", "Demain"), value: "tomorrow" },
+                        ]: Chip {
+                            toggle: false;
+                            text: option.text;
+                            clicked => {
+                                root.pause(option.value);
+                            }
+                        }
+                    }
+                }
+                if root.show[6]: HorizontalLayout {
+                    height: 40px;
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            commands: "M22 12h-4l-3 9L9 3l-3 9H2";
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: L.t("Activity", "Activité");
+                            color: Theme.text;
+                            font-size: 14px;
+                        }
+
+                        Text {
+                            text: root.mode == "watching" ? L.t("Watching", "Regarde") : root.mode == "listening" ? L.t("Listening", "Écoute") : root.mode == "competing" ? L.t("Competing", "Compétition") : L.t("Playing", "Joue");
+                            color: Theme.muted;
+                            font-size: 12px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 2px;
+                        for item in [
+                            { key: "playing", label: L.t("Playing", "Joue"), icon: "M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.978 3.59C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258A4 4 0 0 0 17.32 5z" },
+                            { key: "watching", label: L.t("Watching", "Regarde"), icon: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0" },
+                            { key: "listening", label: L.t("Listening", "Écoute"), icon: "M3 18v-6a9 9 0 0 1 18 0v6M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" },
+                            { key: "competing", label: L.t("Competing", "Compétition"), icon: "M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z" },
+                        ]: VerticalLayout {
+                            alignment: center;
+                            ModeIcon {
+                                icon: item.icon;
+                                label: item.label;
+                                checked: root.mode == item.key;
+                                clicked => {
+                                    root.set-mode(item.key);
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.show[5] || root.show[6]: Separator { }
+                if root.show[7]: PanelItem {
+                    text: root.desktop-installed ? L.t("Open Claude Desktop", "Ouvrir Claude Desktop") : L.t("Download Claude Desktop", "Télécharger Claude Desktop");
+                    external: !root.desktop-installed;
+                    icon: "M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 21h8M12 17v4";
+                    clicked => {
+                        root.open-desktop();
+                    }
+                }
+                if root.show[8]: PanelItem {
+                    text: root.code-installed ? L.t("Launch Claude Code", "Lancer Claude Code") : L.t("Install Claude Code", "Installer Claude Code");
+                    external: !root.code-installed;
+                    icon: "M4 17l6-6-6-6M12 19h8";
+                    clicked => {
+                        root.open-code();
+                    }
+                }
+                PanelItem {
+                    text: L.t("Settings…", "Réglages…");
+                    icon: "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z";
+                    clicked => {
+                        root.open-settings();
+                    }
+                }
+
+                if root.show[9]: PanelItem {
+                    text: root.update-label;
+                    accent: root.update-ready;
+                    external: root.update-ready;
+                    icon: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3";
+                    clicked => {
+                        root.update();
+                    }
+                }
+                PanelItem {
+                    text: L.t("Quit", "Quitter");
+                    icon: "M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10";
+                    danger: true;
+                    clicked => {
+                        root.quit();
+                    }
+                }
+
+                if root.show[10]: VerticalLayout {
+                    padding-top: 4px;
+                    Rectangle {
+                        border-radius: 10px;
+                        background: Theme.hover;
+                        HorizontalLayout {
+                            padding: 8px;
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Path {
+                                    width: 16px;
+                                    height: 16px;
+                                    viewbox-width: 24;
+                                    viewbox-height: 24;
+                                    fill: root.discord-user != "" ? Theme.discord : Theme.muted;
+                                    commands: "M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.6 1.3a18.4 18.4 0 0 0-5.6 0L8.6 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.9 19.9 0 0 0 6 3l1.3-2.1-2-1 .5-.4a14.2 14.2 0 0 0 12.2 0l.5.4-2 1 1.3 2.1a19.8 19.8 0 0 0 6-3c.5-5.2-.9-9.7-3.6-13.7zM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.5 8 10.5s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z";
+                                }
+                            }
+
+                            HorizontalLayout {
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: root.discord-pre;
+                                    color: Theme.muted;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.discord-user;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.discord-post;
+                                    color: Theme.muted;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

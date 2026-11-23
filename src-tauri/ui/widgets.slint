@@ -1,0 +1,683 @@
+// Shared tokens and widgets. Six UI styles, each with a dark and a light
+// palette; main.rs sets the palettes, OLED is the dark one on pure black.
+import { Palette } from "std-widgets.slint";
+
+export struct Colors {
+    bg: color,
+    // Sidebar, the tray panel and the title bar.
+    panel: color,
+    card: color,
+    input: color,
+    line: color,
+    // The window border, drawn by Windows.
+    frame: color,
+    text: color,
+    muted: color,
+    accent: color,
+    on-accent: color,
+    track: color,
+    hover: color,
+    press: color,
+    ok: color,
+    danger: color,
+    warn: color,
+}
+
+export global Theme {
+    // dark | oled | system | light
+    in property <string> mode: "dark";
+    // classic | bento | tui | split | mica | orbit
+    in property <string> design: "classic";
+    in property <Colors> dark-colors;
+    in property <Colors> light-colors;
+    in property <Colors> oled-colors;
+    // Set from Rust: the style's font, the monospace font, and whether Windows
+    // allows animations. Geist is embedded by app.slint.
+    in property <string> font: "Geist";
+    in property <string> mono: "Consolas";
+    in property <bool> motion: true;
+    out property <duration> fast: motion ? 140ms : 0ms;
+    out property <duration> slow: motion ? 320ms : 0ms;
+    out property <bool> oled: mode == "oled";
+    out property <bool> dark: oled || mode == "dark" || (mode == "system" && Palette.color-scheme != ColorScheme.light);
+    property <Colors> c: oled ? oled-colors : dark ? dark-colors : light-colors;
+    out property <color> bg: c.bg;
+    out property <color> panel: c.panel;
+    out property <color> card: c.card;
+    out property <color> input: c.input;
+    out property <color> line: c.line;
+    out property <color> frame: c.frame;
+    out property <color> text: c.text;
+    // Light text on a dark background looks thinner than the same weight on white.
+    out property <int> weight: dark ? 450 : 400;
+    out property <color> muted: c.muted;
+    out property <color> accent: c.accent;
+    out property <color> accent-weak: c.accent.with-alpha(dark ? 0.16 : 0.1);
+    out property <color> on-accent: c.on-accent;
+    out property <color> track: c.track;
+    out property <color> hover: c.hover;
+    out property <color> press: c.press;
+    out property <color> ok: c.ok;
+    out property <color> danger: c.danger;
+    out property <color> warn: c.warn;
+    out property <color> discord: #5865f2;
+    // Shapes of each style.
+    out property <bool> bento: design == "bento";
+    out property <bool> tui: design == "tui";
+    out property <bool> split: design == "split";
+    out property <bool> mica: design == "mica";
+    out property <bool> orbit: design == "orbit";
+    // Cards, and controls (buttons, fields, chips).
+    out property <length> radius: bento ? 16px : tui ? 6px : mica ? 8px : 12px;
+    out property <length> control-radius: tui || mica ? 4px : 8px;
+    // Mica draws every row of a group as its own card.
+    out property <length> divider: mica ? 3px : 1px;
+    out property <color> divider-color: mica ? bg : line;
+}
+
+// English or French, picked from Rust (config.json `language`).
+export global L {
+    in property <bool> french;
+    public pure function t(en: string, fr: string) -> string {
+        return self.french ? fr : en;
+    }
+}
+
+// Stroked 24x24 icon drawn from SVG path commands.
+export component Icon inherits Path {
+    in property <brush> tint: Theme.muted;
+    in property <length> size: 15px;
+    width: size;
+    height: size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: tint;
+    stroke-width: 1.3px;
+    fill: transparent;
+    animate stroke { duration: Theme.fast; }
+}
+
+// Click target that is also reachable with Tab and activated with Space or Enter.
+export component Pressable inherits FocusScope {
+    out property <bool> hovered: touch.has-hover && root.enabled;
+    out property <bool> pressed: touch.pressed && root.enabled;
+    out property <bool> focused: root.has-focus && root.enabled;
+    callback clicked();
+    key-pressed(event) => {
+        if (event.text == " " || event.text == Key.Return) {
+            root.clicked();
+            return accept;
+        }
+        return reject;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Fades its content in and lifts it a few pixels when it appears.
+export component Reveal inherits Rectangle {
+    in property <duration> delay: 0ms;
+    property <bool> shown;
+    opacity: shown ? 1 : 0;
+    animate opacity {
+        duration: Theme.slow;
+        easing: ease-out;
+    }
+    VerticalLayout {
+        padding-top: root.shown ? 0 : 8px;
+        padding-bottom: root.shown ? 8px : 0;
+        animate padding-top, padding-bottom {
+            duration: Theme.slow;
+            easing: ease-out;
+        }
+        @children
+    }
+
+    // Starts after the first frame so there is a hidden state to animate from.
+    Timer {
+        interval: max(root.delay, 16ms);
+        running: !root.shown;
+        triggered => {
+            root.shown = true;
+        }
+    }
+}
+
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> ghost;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 30px;
+    width: label.preferred-width + 28px;
+    border-radius: Theme.orbit && primary ? self.height / 2 : Theme.control-radius;
+    border-width: 1px;
+    border-color: press.focused ? Theme.accent : primary ? Theme.accent : ghost ? transparent : Theme.line;
+    background: primary ? Theme.accent : press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    opacity: !enabled ? 0.42 : primary && press.pressed ? 0.75 : primary && press.hovered ? 0.88 : 1;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    animate background, border-color, opacity { duration: Theme.fast; }
+    label := Text {
+        text: root.text;
+        color: primary ? Theme.on-accent : ghost && !press.hovered ? Theme.muted : Theme.text;
+        font-size: 13.5px;
+        font-weight: 500;
+        animate color { duration: Theme.fast; }
+    }
+
+    press := Pressable {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component Toggle inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> label;
+    in property <bool> enabled: true;
+    // The owner sets `checked` itself after `toggled`.
+    in property <bool> passive;
+    callback toggled();
+    // Mica and Orbit: outlined when off, filled with the accent when on.
+    property <bool> outlined: Theme.mica || Theme.orbit;
+    width: Theme.mica ? 40px : 34px;
+    height: 20px;
+    border-radius: Theme.tui ? 2px : 10px;
+    background: checked ? Theme.accent : outlined ? (press.hovered ? Theme.hover : transparent) : press.hovered ? Theme.press : Theme.track;
+    border-width: press.focused || (outlined && !checked) ? 1px : 0;
+    border-color: press.focused ? Theme.text : Theme.muted;
+    opacity: enabled ? 1 : 0.42;
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        press.clicked();
+    }
+    animate background { duration: Theme.fast; }
+    // The knob stretches while pressed, then slides.
+    Rectangle {
+        property <length> size: root.outlined && !root.checked ? 12px : 14px;
+        y: (root.height - self.height) / 2;
+        width: press.pressed ? self.size + 4px : self.size;
+        x: root.checked ? root.width - self.width - 3px : 4px;
+        height: self.size;
+        border-radius: Theme.tui ? 1px : self.height / 2;
+        background: root.checked ? Theme.on-accent : Theme.muted;
+        animate x, width {
+            duration: Theme.fast;
+            easing: ease-out;
+        }
+        animate background { duration: Theme.fast; }
+    }
+
+    press := Pressable {
+        enabled: root.enabled;
+        clicked => {
+            if (!root.passive) {
+                root.checked = !root.checked;
+            }
+            root.toggled();
+        }
+    }
+}
+
+// Pill that is either a toggle (with a check mark) or a plain action.
+export component Chip inherits Rectangle {
+    in-out property <bool> checked;
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> toggle: true;
+    callback clicked();
+    // Bento and Mica fill a checked chip with the accent; Orbit greys it.
+    property <bool> filled: checked && (Theme.bento || Theme.mica);
+    height: 28px;
+    width: row.preferred-width;
+    border-radius: Theme.tui || Theme.mica ? Theme.control-radius : 14px;
+    border-width: 1px;
+    border-color: press.focused ? Theme.text : checked && !Theme.orbit ? Theme.accent : checked ? transparent : Theme.line;
+    background: filled ? Theme.accent : checked && Theme.orbit ? Theme.track : checked ? Theme.accent-weak : press.pressed ? Theme.press : press.hovered ? Theme.hover : transparent;
+    opacity: enabled ? 1 : 0.42;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checkable: root.toggle;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        press.clicked();
+    }
+    animate background, border-color, width { duration: Theme.fast; }
+    row := HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        spacing: 5px;
+        // The terminal style reads "[x] Effort" / "[ ] Effort".
+        if Theme.tui && root.toggle: Text {
+            text: root.checked ? "[x]" : "[ ]";
+            color: root.checked ? Theme.accent : Theme.muted;
+            font-size: 13.5px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        if root.checked && !Theme.tui: VerticalLayout {
+            alignment: center;
+            Icon {
+                commands: "M20 6L9 17l-5-5";
+                size: 11px;
+                tint: root.filled ? Theme.on-accent : Theme.accent;
+                stroke-width: 2px;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.filled ? Theme.on-accent : root.checked && Theme.tui ? Theme.accent : root.checked || press.hovered ? Theme.text : Theme.muted;
+            font-size: 13.5px;
+            vertical-alignment: center;
+            animate color { duration: Theme.fast; }
+        }
+    }
+
+    press := Pressable {
+        enabled: root.enabled;
+        clicked => {
+            if (root.toggle) {
+                root.checked = !root.checked;
+            }
+            root.clicked();
+        }
+    }
+}
+
+export component Field inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <string> label;
+    in property <string> family;
+    in property <bool> enabled: true;
+    in property <bool> invalid;
+    out property <bool> focused: input.has-focus;
+    callback edited();
+    height: 32px;
+    border-radius: Theme.control-radius;
+    border-width: 1px;
+    border-color: invalid ? Theme.danger : input.has-focus ? Theme.accent : hover.has-hover ? Theme.muted : Theme.line;
+    background: Theme.input;
+    opacity: enabled ? 1 : 0.42;
+    forward-focus: input;
+    animate border-color { duration: Theme.fast; }
+    hover := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => {
+            input.focus();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        view := Rectangle {
+            clip: true;
+            if input.text == "": Text {
+                x: 0;
+                width: parent.width;
+                text: root.placeholder;
+                color: Theme.muted;
+                opacity: 0.7;
+                font-size: 13.5px;
+                font-family: root.family;
+                overflow: elide;
+            }
+            // 1px in: a glyph that starts left of its origin ("C") is not clipped.
+            input := TextInput {
+                x: 1px;
+                width: max(view.width - 1px, self.preferred-width);
+                height: view.height;
+                enabled: root.enabled;
+                single-line: true;
+                font-size: 13.5px;
+                font-family: root.family;
+                color: Theme.text;
+                selection-background-color: Theme.accent;
+                selection-foreground-color: Theme.on-accent;
+                vertical-alignment: center;
+                accessible-label: root.label;
+                edited => {
+                    root.edited();
+                }
+                // Keep the caret visible when the text is wider than the field.
+                cursor-position-changed(position) => {
+                    if (position.x + self.x < 1px) {
+                        self.x = 1px - position.x;
+                    // Before the first layout the field has no width yet: nothing to follow.
+                    } else if (view.width > 0 && position.x + self.x > view.width - 2px) {
+                        self.x = view.width - position.x - 2px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Multi-line text; it grows with its content, the page scrolls.
+export component Area inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <string> label;
+    in property <string> family;
+    in property <bool> read-only;
+    in property <length> min-rows-height: 84px;
+    callback edited();
+    height: max(root.min-rows-height, input.preferred-height + 18px);
+    border-radius: Theme.control-radius;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : hover.has-hover ? Theme.muted : Theme.line;
+    background: Theme.input;
+    forward-focus: input;
+    animate border-color { duration: Theme.fast; }
+    hover := TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => {
+            input.focus();
+        }
+    }
+
+    if input.text == "": Text {
+        x: 10px;
+        y: 9px;
+        width: parent.width - 20px;
+        text: root.placeholder;
+        color: Theme.muted;
+        opacity: 0.7;
+        font-size: 13.5px;
+        font-family: root.family;
+    }
+    input := TextInput {
+        x: 10px;
+        y: 9px;
+        width: parent.width - 20px;
+        height: parent.height - 18px;
+        single-line: false;
+        wrap: word-wrap;
+        read-only: root.read-only;
+        font-size: 13.5px;
+        font-family: root.family;
+        color: Theme.text;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: Theme.on-accent;
+        accessible-label: root.label;
+        edited => {
+            root.edited();
+        }
+    }
+}
+
+// Options of equal width, with a thumb that slides to the selected one.
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in property <length> item-width: 66px;
+    in-out property <int> index;
+    callback selected(int);
+    height: 30px;
+    width: root.options.length * (root.item-width + 2px) + 4px;
+    border-radius: Theme.orbit ? 15px : Theme.control-radius + 1px;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: Theme.input;
+    if root.index >= 0: Rectangle {
+        x: 3px + root.index * (root.item-width + 2px);
+        y: 3px;
+        width: root.item-width;
+        height: parent.height - 6px;
+        border-radius: Theme.orbit ? self.height / 2 : max(2px, Theme.control-radius - 2px);
+        background: Theme.press;
+        border-width: 1px;
+        border-color: Theme.line;
+        animate x {
+            duration: Theme.slow;
+            easing: ease-out;
+        }
+    }
+    for option[i] in root.options: Rectangle {
+        x: 3px + i * (root.item-width + 2px);
+        y: 3px;
+        width: root.item-width;
+        height: parent.height - 6px;
+        border-radius: Theme.orbit ? self.height / 2 : max(2px, Theme.control-radius - 2px);
+        border-width: press.focused ? 1px : 0;
+        border-color: Theme.text;
+        accessible-role: button;
+        accessible-label: option;
+        accessible-checkable: true;
+        accessible-checked: i == root.index;
+        accessible-action-default => {
+            press.clicked();
+        }
+        Text {
+            text: option;
+            color: i == root.index || press.hovered ? Theme.text : Theme.muted;
+            font-size: 13px;
+            font-weight: Theme.weight + (i == root.index ? 100 : 0);
+            animate color { duration: Theme.fast; }
+        }
+
+        press := Pressable {
+            clicked => {
+                root.index = i;
+                root.selected(i);
+            }
+        }
+    }
+}
+
+export component Group inherits Rectangle {
+    border-radius: Theme.radius;
+    clip: Theme.mica;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: Theme.card;
+    VerticalLayout {
+        @children
+    }
+}
+
+export component GroupTitle inherits VerticalLayout {
+    in property <string> text;
+    padding-top: 22px;
+    padding-bottom: 8px;
+    HorizontalLayout {
+        alignment: start;
+        if Theme.tui: Text {
+            text: "## ";
+            color: Theme.accent;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.text;
+            color: Theme.orbit ? Theme.text : Theme.muted;
+            font-size: Theme.orbit ? 15px : 13px;
+            font-weight: 500;
+        }
+    }
+}
+
+// One setting: title and hint on the left, the control on the right.
+export component Row inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+    in property <bool> divider: true;
+    min-height: 52px;
+    if root.divider: Rectangle {
+        y: 0;
+        height: Theme.divider;
+        background: Theme.divider-color;
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 14px;
+                overflow: elide;
+            }
+
+            // One line: a wrapped hint would not grow the row and would spill out of it.
+            if root.hint != "": Text {
+                text: root.hint;
+                color: Theme.muted;
+                font-size: 13px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            @children
+        }
+    }
+}
+
+// Title and hint above a control that takes the full width (chips, fields).
+export component Block inherits VerticalLayout {
+    in property <string> title;
+    in property <string> hint;
+    in property <bool> divider: true;
+    if root.divider: Rectangle {
+        height: Theme.divider;
+        background: Theme.divider-color;
+    }
+    VerticalLayout {
+        padding: 14px;
+        padding-top: 10px;
+        padding-bottom: 12px;
+        spacing: 8px;
+        VerticalLayout {
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 14px;
+            }
+
+            if root.hint != "": Text {
+                text: root.hint;
+                color: Theme.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+
+        @children
+    }
+}
+
+// Usage gauge: accent, amber from 80 %, red from 95 %. The terminal style
+// draws it as a row of blocks.
+export component Meter inherits Rectangle {
+    // 0..1
+    in property <float> percent;
+    // 0 fine, 1 high, 2 critical
+    in property <int> level;
+    in property <string> label;
+    in property <string> value;
+    in property <bool> big;
+    property <bool> grown;
+    property <color> fill: root.level == 2 ? Theme.danger : root.level == 1 ? Theme.warn : Theme.accent;
+    property <int> blocks: Theme.tui ? floor(self.width / 9px) : 0;
+    property <int> lit: root.grown ? round(root.blocks * root.percent) : 0;
+    height: Theme.tui ? 12px : Theme.mica || Theme.orbit ? 4px : root.big || Theme.bento ? 8px : 6px;
+    border-radius: Theme.tui ? 0 : self.height / 2;
+    background: Theme.tui ? transparent : Theme.track;
+    accessible-role: progress-indicator;
+    accessible-label: root.label;
+    accessible-value: root.value;
+    // Fills from the left when it appears, then follows each new reading.
+    if !Theme.tui: Rectangle {
+        x: 0;
+        width: root.grown ? parent.width * root.percent : 0;
+        border-radius: parent.border-radius;
+        background: root.fill;
+        animate width {
+            duration: Theme.motion ? 600ms : 0ms;
+            easing: ease-out;
+        }
+        animate background { duration: Theme.slow; }
+    }
+    for i in root.blocks: Rectangle {
+        x: i * 9px;
+        width: 7px;
+        background: i < root.lit ? root.fill : Theme.track;
+        animate background {
+            duration: Theme.fast;
+            delay: Theme.motion ? i * 12ms : 0ms;
+        }
+    }
+
+    Timer {
+        interval: 120ms;
+        running: !root.grown;
+        triggered => {
+            root.grown = true;
+        }
+    }
+}
+
+// Last 24 h of the 5-hour session, as an area under a line. Rust draws both
+// paths in this element's own pixels: a Path keeps its proportions when scaled.
+export component Spark inherits Rectangle {
+    in property <string> line;
+    in property <string> area;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: root.area;
+        fill: Theme.accent-weak;
+        stroke-width: 0;
+    }
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: root.line;
+        stroke: Theme.accent;
+        stroke-width: 1.5px;
+        fill: transparent;
+    }
+}
+
+export component PlanPill inherits Rectangle {
+    in property <string> text;
+    height: 20px;
+    width: caption.preferred-width + 18px;
+    border-radius: Theme.tui || Theme.mica ? 4px : 10px;
+    background: Theme.accent-weak;
+    caption := Text {
+        text: root.text;
+        color: Theme.accent;
+        font-size: 12px;
+        font-weight: 600;
+    }
+}

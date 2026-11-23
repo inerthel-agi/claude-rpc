@@ -1,21 +1,40 @@
 [package]
 name = "claude_rpc_tray"
-version = "4.0.5"
+version = "4.1.0"
 description = "Claude RPC"
 authors = ["inerthel-agi"]
 license = "MIT"
 edition = "2021"
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
+
+[[bin]]
+name = "claude-rpc"
+path = "src/main.rs"
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+slint-build = "1.19"
+winresource = "0.1"
 
 [dependencies]
+notify-rust = "4"
+# Already used by Slint; decodes the tray picture for the Windows icon.
+png = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-notification = "2"
-tauri-plugin-single-instance = "2"
-tauri-plugin-updater = "2"
+# Software renderer only: no GPU context and no web view, which keeps memory at a few MB.
+slint = { version = "1.19", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "backend-winit",
+  "renderer-software",
+  "system-tray",
+  # Window options and focus events for the tray panel (panel.rs).
+  "unstable-winit-030",
+] }
 ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -23,10 +42,20 @@ windows = { version = "0.61.3", features = [
   "Wdk_System_Threading",
   "Win32_Foundation",
   "Win32_Globalization",
+  "Win32_Graphics_Gdi",
   "Win32_System_Com",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
   "Win32_System_Pipes",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_Accessibility",
+  "Win32_UI_Controls",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+# Slint's headless platform, so tests can build the settings window.
+i-slint-backend-testing = "=1.19.0"
