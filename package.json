@@ -1,11 +1,9 @@
 {
   "name": "claude-rpc",
-  "version": "4.0.5",
+  "private": true,
   "description": "Claude RPC",
   "scripts": {
-    "start": "tauri dev",
-    "build": "node scripts/build-tauri.js",
-    "tauri": "tauri",
+    "build": "node scripts/build.js",
     "test": "node scripts/cargo-test.js"
   },
   "keywords": [
@@ -17,8 +15,5 @@
   ],
   "author": "inerthel-agi",
   "license": "MIT",
-  "type": "commonjs",
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1"
-  }
+  "type": "commonjs"
 }

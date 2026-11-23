@@ -6,34 +6,38 @@ Claude RPC shows your Claude Code and Claude Desktop activity as a Discord Rich 
 
 ## Requirements
 
-- Windows 10 or 11 with the Microsoft Edge WebView2 runtime.
+- Windows 10 or 11.
 - The Discord desktop app, running and signed in.
 - Claude Code (CLI) or Claude Desktop.
 
 To build from source:
 
-- Rust 1.89.0 (the version used by CI and releases).
-- Node.js 22 and npm.
+- Rust 1.95.0 (the version used by CI and releases; Slint 1.19 needs it).
+- Node.js 22 and npm, to run the build and test scripts.
 - Visual Studio Build Tools with the C++ workload.
+- NSIS 3 (`makensis`), to build the installer.
 
 ## Install
 
 Download one of these files from the latest GitHub release:
 
-- `Claude.RPC_4.0.5_x64-setup.exe`: installer.
+- `Claude.RPC_4.1.0_x64-setup.exe`: installer. It installs to `%LOCALAPPDATA%\Claude RPC` and replaces an earlier version in place.
 - `claude-rpc.exe`: portable executable.
 
-Versions before v3.7.0 cannot verify the current update signature. Install v3.7.0 or later manually once; later updates install from the app.
+Updates:
+
+- v3.7.0 to v4.0.5 install v4.1.0 from the update item of their tray menu.
+- From v4.1.0, the app checks GitHub releases. When a newer version exists, the tray menu and the settings show it, and **Download** opens its release page.
+- Versions before v3.7.0 cannot verify the current update signature. Install the new version manually.
 
 Build from source:
 
 ```powershell
-npm ci
 npm test
 npm run build
 ```
 
-`npm run build` writes `src-tauri\target\release\claude-rpc.exe`, the installer under `src-tauri\target\release\bundle\nsis\`, and a copy at `bin\claude-rpc.exe`. The signing step at the end fails without `TAURI_SIGNING_PRIVATE_KEY`; the executable and installer are already written at that point.
+`npm run build` writes `src-tauri\target\release\claude-rpc.exe`, a copy at `bin\claude-rpc.exe`, and the installer under `src-tauri\target\release\bundle\nsis\`. With `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` set, it also writes the installer's `.sig` with `npx @tauri-apps/cli@2.10.1 signer sign`.
 
 ## Usage
 
@@ -49,6 +53,10 @@ The screenshots use sample data.
 - Right-click the icon to open the menu: model and client, usage limits with a 24-hour chart of the 5-hour session, usage credits, pause, activity type, Open Claude Desktop, Launch Claude Code, settings, updates.
 - Left-click the icon to open the settings: Presence, Usage, Privacy, Profile buttons, General, About.
 - Hover the icon to see the model and the usage limits.
+- Press `Escape` or click elsewhere to close the menu.
+- Run `claude-rpc.exe --settings` to open the settings at launch. Starting the app while it runs opens its settings.
+
+Settings > General picks the theme (Dark, OLED, System, Light) and the UI style (Classic, Discord Bento, Claude Code TUI, Split Studio, Fluent Mica, Orbit) of the settings and the tray menu.
 
 The menu opens Claude Desktop when it is installed, or its download page. It starts `claude` in a new terminal when Claude Code is on `PATH` or in `%USERPROFILE%\.local\bin`, or opens the install guide.
 
@@ -56,7 +64,7 @@ Settings save as soon as they change. The Discord preview at the top of the sett
 
 ## Configuration
 
-Settings are stored in `%USERPROFILE%\.claude-rpc\config.json`. The settings window edits every key below.
+Settings are stored in `%USERPROFILE%\.claude-rpc\config.json`. The settings window edits every key below. The theme, the UI style, the hidden tray menu sections and the last settings page are stored in `ui.json` in the same folder.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -115,3 +123,9 @@ Environment variables:
 ## License
 
 MIT. See `LICENSE`.
+
+The interface uses [Slint](https://slint.dev) under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0. This badge is the attribution that license requires:
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+
+The Geist font in `src-tauri/ui/fonts/` is under the SIL Open Font License 1.1.

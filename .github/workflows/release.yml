@@ -18,26 +18,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Set up Rust 1.89.0
+      # Slint 1.19 needs Rust 1.95.
+      - name: Set up Rust 1.95.0
         shell: pwsh
         run: |
-          rustup toolchain install 1.89.0 --profile minimal
-          rustup default 1.89.0
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
 
       - name: Install NSIS
         shell: pwsh
         run: choco install nsis --version=3.11 -y --no-progress
 
-      - run: npm ci
-
-      - run: node --check tauri-ui/main.js
-      - run: node --check tauri-ui/tray.js
-      - run: node --check tauri-ui/shared.js
-
       - run: npm test
 
+      # The .sig lets installs of 4.0.x update themselves to this version.
       - name: Build (signed)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

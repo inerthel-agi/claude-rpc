@@ -12,9 +12,7 @@ const minimumSafe = {
   'event-listener': '5.4.2',
   'quick-xml': '0.41.0',
   rustls: '0.23.45',
-  serde_with: '3.21.0',
   tar: '0.4.46',
-  tauri: '2.11.1',
 };
 const lock = fs.readFileSync(path.join(__dirname, '..', 'src-tauri', 'Cargo.lock'), 'utf8');
 const packages = lock.split('[[package]]').slice(1).map((entry) => ({
